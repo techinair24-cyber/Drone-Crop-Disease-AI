@@ -1,0 +1,14 @@
+.env
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+data/
+uploads/
+models/
+*.sqlite3
+*.db
+*.pt
+*.pth
+*.safetensors
+*.onnx
