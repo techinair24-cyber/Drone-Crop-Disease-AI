@@ -42,10 +42,12 @@ htmlcov/
 backend/.env
 backend/data/
 backend/uploads/
-backend/models/
 *.sqlite3
 *.db
 *.pt
 *.pth
 *.safetensors
 *.onnx
+backend/models/*
+!backend/models/plantvillage-mobilenetv2/
+!backend/models/plantvillage-mobilenetv2/**
