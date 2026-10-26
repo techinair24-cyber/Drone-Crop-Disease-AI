@@ -159,16 +159,23 @@ async def predict(
     captured_at: datetime | None = Form(default=None),
 ) -> dict:
     if (latitude is None) != (longitude is None):
-        raise HTTPException(status_code=422, detail="Latitude and longitude must be supplied together.")
-    gps_metadata = (gps_fix_valid, gps_timestamp, captured_at)
-    if latitude is None and any(value is not None for value in gps_metadata):
-        raise HTTPException(status_code=422, detail="GPS metadata requires latitude and longitude.")
-    if latitude is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="Latitude and longitude must be supplied together.",
+        )
+
+    if latitude is None:
+        gps_fix_valid = None
+        gps_timestamp = None
+        captured_at = None
+    else:
         if gps_fix_valid is not True or gps_timestamp is None or captured_at is None:
             raise HTTPException(
                 status_code=422,
                 detail="GPS coordinates require a valid fix and both GPS and image capture timestamps.",
             )
+
+    if latitude is not None:
         if gps_timestamp.tzinfo is None or captured_at.tzinfo is None:
             raise HTTPException(status_code=422, detail="GPS and capture timestamps must include a timezone.")
         if abs((gps_timestamp - captured_at).total_seconds()) > settings.gps_max_skew_seconds:
