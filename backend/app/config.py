@@ -35,7 +35,7 @@ def get_settings() -> Settings:
     return Settings(
         database_path=_storage_path("DATABASE_PATH", BACKEND_DIR / "data" / "detections.sqlite3"),
         uploads_path=_storage_path("UPLOADS_PATH", BACKEND_DIR / "uploads"),
-        model_path=os.getenv("MODEL_PATH") or None,
+        model_path=str(_storage_path("MODEL_PATH", BACKEND_DIR / "models" / "plantvillage-mobilenetv2")) if os.getenv("MODEL_PATH") else None,
         model_threshold=float(os.getenv("MODEL_SCORE_THRESHOLD", "0.55")),
         max_upload_bytes=int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
         gps_max_skew_seconds=int(os.getenv("GPS_MAX_SKEW_SECONDS", "30")),
