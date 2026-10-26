@@ -1,4 +1,4 @@
-const DEFAULT_API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/+$/, '')
+const DEFAULT_API_BASE = (import.meta.env.VITE_API_BASE_URL || 'https://drone-crop-disease-ai.onrender.com').replace(/\/+$/, '')
 const API_BASE_STORAGE_KEY = 'apiBaseUrl'
 
 function getApiBase() {
