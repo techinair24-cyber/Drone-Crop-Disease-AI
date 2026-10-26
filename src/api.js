@@ -1,4 +1,9 @@
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/+$/, '')
+const DEFAULT_API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/+$/, '')
+const API_BASE_STORAGE_KEY = 'apiBaseUrl'
+
+function getApiBase() {
+  return (localStorage.getItem(API_BASE_STORAGE_KEY) || DEFAULT_API_BASE).replace(/\/+$/, '')
+}
 
 export class ApiError extends Error {
   constructor(message, status = 0) {
@@ -11,7 +16,7 @@ export class ApiError extends Error {
 async function request(path, options = {}) {
   let response
   try {
-    response = await fetch(`${API_BASE}${path}`, options)
+    response = await fetch(`${getApiBase()}${path}`, options)
   } catch {
     throw new ApiError('Cannot reach the backend. Check that the API is running and VITE_API_BASE_URL is correct.')
   }
@@ -23,7 +28,10 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  baseUrl: API_BASE,
+  defaultBaseUrl: DEFAULT_API_BASE,
+  get baseUrl() {
+    return getApiBase()
+  },
   health: () => request('/health'),
   status: () => request('/api/status'),
   stats: () => request('/api/stats'),
@@ -66,7 +74,7 @@ export const api = {
     }
     return request('/api/predict', { method: 'POST', body: form })
   },
-  imageUrl: (path) => path?.startsWith('http') ? path : `${API_BASE}${path || ''}`,
+  imageUrl: (path) => path?.startsWith('http') ? path : `${getApiBase()}${path || ''}`,
 }
 
 export async function exportDetections(params = {}) {

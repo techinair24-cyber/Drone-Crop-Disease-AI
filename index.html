@@ -3,9 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#101713" />
-    <meta name="description" content="DroneCrop AI — crop health intelligence from drone imagery." />
-    <title>DroneCrop AI — Field Intelligence</title>
+    <script>
+      (() => {
+        try {
+          const stored = localStorage.getItem('theme')
+          const theme = stored === 'dark' || stored === 'light' ? stored : 'light'
+          document.documentElement.dataset.theme = theme
+          document.documentElement.style.colorScheme = theme
+        } catch {
+          document.documentElement.dataset.theme = 'light'
+        }
+      })()
+    </script>
+    <meta name="theme-color" content="#f7f9f6" />
+    <meta name="description" content="TECH IN AIR crop disease AI dashboard for field monitoring and image analysis." />
+    <title>TECH IN AIR | Drone Crop Disease AI</title>
   </head>
   <body>
     <div id="root"></div>

@@ -1,8 +1,8 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  Activity, AlertCircle, ArrowDownToLine, ArrowRight, Camera, Check, ChevronLeft,
-  ChevronRight, CircleHelp, CloudOff, Crosshair, FileImage, ImagePlus, Leaf,
+  AlertCircle, ArrowDownToLine, ArrowRight, Camera, Check, ChevronLeft,
+  ChevronRight, CloudOff, Crosshair, FileImage, ImagePlus, Leaf,
   MapPin, RefreshCw, Search, ShieldAlert, Upload,
 } from 'lucide-react'
 import { api, exportDetections } from './api.js'
@@ -13,17 +13,19 @@ const formatDate = (value) => value ? new Date(value).toLocaleString(undefined, 
 const score = (value) => Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '—'
 const coords = (row) => Number.isFinite(row.latitude) && Number.isFinite(row.longitude)
 
-function PageIntro({ eyebrow = 'DroneCrop AI', title, description, action }) {
-  return <div className="page-intro"><div><div className="eyebrow">{eyebrow}</div><h1 className="page-title">{title}</h1><p className="page-description">{description}</p></div>{action}</div>
+function imageValidationError(file) {
+  if (!['image/jpeg', 'image/png'].includes(file.type)) return 'Choose a JPG, JPEG, or PNG image.'
+  if (file.size > 10 * 1024 * 1024) return 'Image exceeds the 10 MB upload limit.'
+  return null
 }
 
-function ErrorNotice({ error, onRetry }) {
+function ErrorNotice({ error, onRetry, compact = false }) {
   if (!error) return null
-  return <div className="notice warning" role="alert"><AlertCircle size={16} /><span>{error.message || 'Unable to load data.'}</span>{onRetry && <button className="button" onClick={onRetry}><RefreshCw size={13} />Retry</button>}</div>
+  return <div className={`notice warning${compact ? ' compact-notice' : ''}`} role="alert"><AlertCircle size={16} /><span>{error.message || 'Unable to load data.'}</span>{onRetry && <button className="button" onClick={onRetry}><RefreshCw size={13} />Retry</button>}</div>
 }
 
-function EmptyState({ title, children, icon: Icon = CloudOff }) {
-  return <div className="empty-state"><div className="empty-icon"><Icon size={17} /></div><div className="empty-title">{title}</div><p className="empty-copy">{children}</p></div>
+function EmptyState({ title, icon: Icon = CloudOff }) {
+  return <div className="empty-state"><div className="empty-icon"><Icon size={17} /></div><div className="empty-title">{title}</div></div>
 }
 
 function useLoad(load, dependencies = []) {
@@ -41,13 +43,33 @@ function useLoad(load, dependencies = []) {
   return { data, error, busy, refresh }
 }
 
-function StatusIndicator({ label, value }) {
+function StatusIndicator({ label, value, loading = false }) {
   const available = value === true || value === 'available' || value === 'online'
-  return <div className="status-row"><span className="status-label"><span className={`status-dot ${available ? 'online' : ''}`} />{label}</span><span className="status-text">{available ? 'Available' : 'Unavailable'}</span></div>
+  return <div className="status-row"><span className="status-label"><span className={`status-dot ${available ? 'online' : loading ? '' : 'offline'}`} />{label}</span><span className="status-text">{loading ? 'Checking' : available ? 'Available' : 'Unavailable'}</span></div>
+}
+
+function getOverviewStatus(value) {
+  if (!value || typeof value !== 'object') return null
+  if (value.status === 'not_configured') return 'Not configured'
+  if (value.status === 'error') return 'Error'
+  if (typeof value.available === 'boolean') return value.available ? 'Available' : 'Unavailable'
+  if (value.status === 'available' || value.status === 'online') return 'Available'
+  if (value.status === 'unavailable' || value.status === 'offline') return 'Unavailable'
+  return null
+}
+
+function OverviewStatusRow({ label, status }) {
+  return <div className="overview-status-row">
+    <span>{label}</span>
+    <span className="overview-status-value">
+      <span className={`overview-status-dot${status === 'Available' ? ' available' : ''}`} />
+      {status}
+    </span>
+  </div>
 }
 
 function ActivityRows({ records }) {
-  if (!records?.length) return <EmptyState title="No detections yet">Analyzed images will appear here once real model inference is available.</EmptyState>
+  if (!records?.length) return <EmptyState title="No detections yet" />
   return <div className="activity-list">{records.map((row) => <Link key={row.id} to={`/history?id=${encodeURIComponent(row.id)}`} className="activity-item" style={{ textDecoration: 'none' }}>
     {row.image_url ? <img className="thumb" src={api.imageUrl(row.image_url)} alt="" /> : <div className="thumb" />}
     <div className="activity-main"><div className="activity-name">{row.disease_name || 'Inconclusive result'}</div><div className="activity-meta">{row.crop_name || 'Crop unknown'} · {formatDate(row.created_at)}</div></div>
@@ -61,36 +83,33 @@ export function OverviewPage() {
   const recent = useLoad(() => api.detections({ page: 1, page_size: 5 }), [])
   const summary = stats.data
   const chart = summary?.activity || []
-  const diseaseData = summary?.disease_distribution || []
+  const deviceStatuses = [
+    ['Camera', getOverviewStatus(status.data?.camera)],
+    ['GPS', getOverviewStatus(status.data?.gps)],
+    ['AI Model', getOverviewStatus(status.data?.model)],
+    ['Telemetry', getOverviewStatus(status.data?.telemetry)],
+  ].filter(([, value]) => value !== null)
   return <>
-    <PageIntro eyebrow="Field overview" title="Good day, operator" description="A clear view of your crop health intelligence and connected field equipment." action={<Link to="/monitor" className="button primary"><ImagePlus size={14} />Analyze an image</Link>} />
-    <ErrorNotice error={stats.error} onRetry={stats.refresh} />
-    <div className="grid metric-grid" style={{ marginTop: stats.error ? 14 : 0 }}>
+    <div className="overview-heading"><h1 className="page-title">Overview</h1></div>
+    <div className="grid metric-grid overview-metrics">
       {[
-        ['Images analyzed', summary?.total_images ?? '—', 'Recorded by the backend', FileImage],
-        ['Disease detections', summary?.diseased_images ?? '—', 'Model-classified records', ShieldAlert],
-        ['Healthy images', summary?.healthy_images ?? '—', 'Model-classified records', Leaf],
-        ['With GPS fix', summary?.geolocated_images ?? '—', 'Records with valid coordinates', MapPin],
-      ].map(([label, value, note, Icon]) => <div className="card metric-card" key={label}><Icon className="metric-icon" size={18} /><div className="metric-label">{label}</div><div className="metric-value">{stats.busy ? <div className="loading-line" style={{ width: 55 }} /> : value}</div><div className="metric-note">{note}</div></div>)}
+        ['Images Analyzed', summary?.total_images ?? '—', FileImage],
+        ['Disease Detections', summary?.diseased_images ?? '—', ShieldAlert],
+        ['Healthy Images', summary?.healthy_images ?? '—', Leaf],
+        ['GPS-Tagged Detections', summary?.geolocated_images ?? '—', MapPin],
+      ].map(([label, value, Icon]) => <div className="card metric-card" key={label}><Icon className="metric-icon" size={18} /><div className="metric-label">{label}</div><div className="metric-value">{stats.busy ? <div className="loading-line" style={{ width: 55 }} /> : value}</div></div>)}
     </div>
-    <div className="grid overview-middle">
-      <div className="card"><div className="card-heading"><div><div className="card-title">Detection activity</div><div className="card-subtitle">Daily analyzed images from backend records</div></div><span className="badge neutral">Last 14 days</span></div>
-        {chart.length ? <div className="chart-wrap"><Suspense fallback={<div className="chart-empty">Loading chart…</div>}><ActivityChart data={chart} /></Suspense></div> : <div className="chart-empty">{stats.busy ? 'Loading activity…' : 'No activity records available.'}</div>}
+    <div className="grid overview-panels">
+      <div className="card"><div className="card-heading"><div className="card-title">Detection Activity</div></div>
+        {stats.error ? <ErrorNotice error={stats.error} onRetry={stats.refresh} compact /> : chart.length ? <div className="chart-wrap"><Suspense fallback={<div className="chart-empty">Loading…</div>}><ActivityChart data={chart} /></Suspense></div> : <div className="overview-empty">No activity</div>}
       </div>
-      <div className="card"><div className="card-heading"><div><div className="card-title">Field equipment</div><div className="card-subtitle">Live connection status from the backend</div></div><Activity size={15} color="#9bd45b" /></div>
-        {status.error && <ErrorNotice error={status.error} onRetry={status.refresh} />}
-        <div className="status-list">{[['Camera', status.data?.camera], ['GPS fix', status.data?.gps], ['AI model', status.data?.model], ['Drone telemetry', status.data?.telemetry]].map(([name, value]) => <StatusIndicator key={name} label={name} value={value?.available ?? value?.status} />)}</div>
-        <div className="card-subtitle" style={{ lineHeight: 1.6, marginTop: 12 }}>No camera, GPS receiver, or APM telemetry integration is currently configured.</div>
+      <div className="card"><div className="card-heading"><div className="card-title">Drone Status</div></div>
+        {status.error ? <ErrorNotice error={status.error} onRetry={status.refresh} compact /> : deviceStatuses.length ? <div className="overview-status-list">{deviceStatuses.map(([label, value]) => <OverviewStatusRow key={label} label={label} status={value} />)}</div> : <div className="overview-empty">{status.busy ? 'Loading…' : 'Status unavailable'}</div>}
       </div>
     </div>
-    <div className="grid overview-bottom">
-      <div className="card"><div className="card-heading"><div><div className="card-title">Crop-wise disease distribution</div><div className="card-subtitle">Disease labels from saved model records</div></div></div>
-        {diseaseData.length ? <div className="crop-bars">{diseaseData.map((row) => <div key={`${row.crop_name}-${row.disease_name}`}><div className="crop-line"><span>{row.crop_name} · {row.disease_name}</span><span>{row.count}</span></div><div className="bar-track"><div className="bar-fill" style={{ width: `${Math.max(3, 100 * row.count / diseaseData[0].count)}%` }} /></div></div>)}</div> : <EmptyState title="Nothing to summarize">Disease distribution will appear after the backend records a real disease-classified image.</EmptyState>}
+    <div className="card overview-recent"><div className="card-heading"><div className="card-title">Recent Detections</div><Link className="button ghost" to="/history">View history <ArrowRight size={13} /></Link></div>
+        {recent.error ? <ErrorNotice error={recent.error} onRetry={recent.refresh} compact /> : recent.busy ? <div className="loading-line" /> : <ActivityRows records={recent.data?.items} />}
       </div>
-      <div className="card"><div className="card-heading"><div><div className="card-title">Recent detection activity</div><div className="card-subtitle">Latest real records from this system</div></div><Link className="button ghost" to="/history">View history <ArrowRight size={13} /></Link></div>
-        <ErrorNotice error={recent.error} onRetry={recent.refresh} />{recent.busy ? <div className="loading-line" /> : <ActivityRows records={recent.data?.items} />}
-      </div>
-    </div>
   </>
 }
 
@@ -108,8 +127,8 @@ export function MonitorPage() {
   const onFile = (event) => {
     const selected = event.target.files?.[0]
     if (!selected) return
-    if (!['image/jpeg', 'image/png'].includes(selected.type)) { setError(new Error('Choose a JPG, JPEG, or PNG image.')); event.target.value = ''; setFile(null); setPreview(''); setResult(null); return }
-    if (selected.size > 10 * 1024 * 1024) { setError(new Error('Image exceeds the 10 MB upload limit.')); event.target.value = ''; setFile(null); setPreview(''); setResult(null); return }
+    const validationError = imageValidationError(selected)
+    if (validationError) { setError(new Error(validationError)); event.target.value = ''; setFile(null); setPreview(''); setResult(null); return }
     setError(null)
     setResult(null)
     if (preview) URL.revokeObjectURL(preview)
@@ -127,78 +146,240 @@ export function MonitorPage() {
     } catch (cause) { setError(cause) } finally { setBusy(false) }
   }
   const record = result?.detection || result
+  const cameraStatus = getOverviewStatus(deviceStatus.data?.camera)
+  const cameraPlaceholder = cameraStatus === 'Available'
+    ? 'Feed unavailable'
+    : cameraStatus === 'Unavailable'
+      ? 'Camera unavailable'
+      : deviceStatus.busy
+        ? 'Checking camera'
+        : 'Camera status unavailable'
+  const hasValidRecordGps = record?.gps_fix_valid === true && coords(record)
   return <>
-    <PageIntro eyebrow="Image acquisition" title="Live monitoring" description="Camera hardware is not connected. Upload a crop image to request backend analysis." />
-    <div className="grid monitor-grid">
-      <div className="card">
-        <div className="card-heading"><div><div className="card-title">Camera preview</div><div className="card-subtitle">ESP32-CAM integration · pending</div></div><span className="badge neutral"><span className={`status-dot ${deviceStatus.data?.camera?.available ? 'online' : 'offline'}`} style={{ marginRight: 6 }} />{deviceStatus.data?.camera?.available ? 'Available' : 'Offline'}</span></div>
-        <div className="camera-view">{preview ? <img className="preview-image" src={preview} alt="Selected crop for analysis" /> : <div className="camera-placeholder"><Camera size={27} /><strong>Live camera unavailable</strong><span>Connect an ESP32-CAM endpoint to enable camera capture.</span></div>}</div>
-        <div className="camera-actions">
-          <label className="button" htmlFor="crop-upload"><Upload size={14} />Upload image</label>
-          <input className="hidden-input" id="crop-upload" type="file" accept="image/jpeg,image/png" onChange={onFile} />
-          <button className="button" disabled={!file || busy} onClick={analyze}>{busy ? <RefreshCw size={14} className="spin" /> : <Crosshair size={14} />}{busy ? 'Analyzing…' : 'Analyze image'}</button>
-          <button className="button" disabled title="Live monitoring requires an ESP32-CAM backend integration">Start monitoring</button>
-          <button className="button" disabled title="Live monitoring requires an ESP32-CAM backend integration">Stop monitoring</button>
-          <button className="button" disabled title="Live monitoring requires an ESP32-CAM backend integration">Capture image</button>
+    <div className="monitor-page">
+      <div className="monitor-page-heading"><h1 className="page-title">Live monitoring</h1></div>
+      <div className="grid live-monitor-grid">
+        <div className="card live-monitor-preview-card">
+          <div className="card-heading">
+            <div className="card-title">Camera Preview</div>
+            {cameraStatus && <span className={`badge ${cameraStatus === 'Available' ? '' : 'neutral'}`}>{cameraStatus}</span>}
+          </div>
+          <div className="camera-view live-monitor-camera-view">
+            {preview
+              ? <img className="preview-image" src={preview} alt="Selected crop for analysis" />
+              : <div className="camera-placeholder"><Camera size={27} /><strong>{cameraPlaceholder}</strong></div>}
+          </div>
+          <div className="camera-actions live-monitor-actions">
+            <input className="hidden-input" id="crop-upload" type="file" accept="image/jpeg,image/png" onChange={onFile} />
+            <label className="button" htmlFor="crop-upload"><Upload size={14} />Upload image</label>
+            <button className="button primary" disabled={!file || busy} onClick={analyze}>{busy ? <RefreshCw size={14} className="spin" /> : <Crosshair size={14} />}{busy ? 'Analyzing…' : 'Analyze image'}</button>
+          </div>
+          {file && <div className="card-subtitle live-monitor-file">{file.name} · {(file.size / (1024 * 1024)).toFixed(2)} MB</div>}
+          <ErrorNotice error={error} />
         </div>
-        {file && <div className="card-subtitle" style={{ marginTop: 11 }}>Selected: {file.name} · {(file.size / (1024 * 1024)).toFixed(2)} MB</div>}
-        <ErrorNotice error={error} />
-      </div>
-      <div className="card"><div className="card-heading"><div><div className="card-title">Analysis status</div><div className="card-subtitle">No simulated camera or sensor data</div></div></div>
-        <ErrorNotice error={deviceStatus.error} onRetry={deviceStatus.refresh} />
-        <div className="status-list"><StatusIndicator label="Camera connection" value={deviceStatus.data?.camera?.available} /><StatusIndicator label="GPS fix" value={deviceStatus.data?.gps?.available} /><StatusIndicator label="Model inference" value={deviceStatus.data?.model?.available} /></div>
-        <div className="form-row"><div className="form-label">Optional GPS coordinates</div><div className="form-help">Coordinates are saved only with a valid GPS fix and GPS/capture times within 30 seconds.</div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}><input className="field" aria-label="Latitude" placeholder="Latitude" type="number" min="-90" max="90" step="any" value={gps.latitude} onChange={(event) => setGps({ ...gps, latitude: event.target.value })} /><input className="field" aria-label="Longitude" placeholder="Longitude" type="number" min="-180" max="180" step="any" value={gps.longitude} onChange={(event) => setGps({ ...gps, longitude: event.target.value })} /></div>
-          <label className="status-label" style={{ marginTop: 12 }}><input type="checkbox" checked={gps.fixValid} onChange={(event) => setGps({ ...gps, fixValid: event.target.checked })} /> GPS fix is valid</label>
-          <div style={{ display: 'grid', gap: 7, marginTop: 8 }}><label className="form-help">GPS fix timestamp<input className="field form-input" type="datetime-local" aria-label="GPS fix timestamp" value={gps.gpsTimestamp} onChange={(event) => setGps({ ...gps, gpsTimestamp: event.target.value })} /></label><label className="form-help">Image capture timestamp<input className="field form-input" type="datetime-local" aria-label="Image capture timestamp" value={gps.capturedAt} onChange={(event) => setGps({ ...gps, capturedAt: event.target.value })} /></label></div>
+        <div className="live-monitor-side">
+          <div className="card">
+            <div className="card-heading"><div className="card-title">Drone Status</div></div>
+            <ErrorNotice error={deviceStatus.error} onRetry={deviceStatus.refresh} compact />
+            {!deviceStatus.error && <div className="status-list">
+              <StatusIndicator label="Camera" value={deviceStatus.data?.camera?.available} loading={deviceStatus.busy} />
+              <StatusIndicator label="GPS" value={deviceStatus.data?.gps?.available} loading={deviceStatus.busy} />
+              <StatusIndicator label="Telemetry" value={deviceStatus.data?.telemetry?.available} loading={deviceStatus.busy} />
+            </div>}
+            {hasValidRecordGps && <div className="live-monitor-coordinates"><span>GPS coordinates</span><strong>{record.latitude.toFixed(5)}, {record.longitude.toFixed(5)}</strong></div>}
+          </div>
+          <details className="card live-monitor-gps">
+            <summary className="card-title">Optional GPS information</summary>
+            <div className="form-row">
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <input className="field" aria-label="Latitude" placeholder="Latitude" type="number" min="-90" max="90" step="any" value={gps.latitude} onChange={(event) => setGps({ ...gps, latitude: event.target.value })} />
+                <input className="field" aria-label="Longitude" placeholder="Longitude" type="number" min="-180" max="180" step="any" value={gps.longitude} onChange={(event) => setGps({ ...gps, longitude: event.target.value })} />
+              </div>
+              <label className="status-label" style={{ marginTop: 12 }}><input type="checkbox" checked={gps.fixValid} onChange={(event) => setGps({ ...gps, fixValid: event.target.checked })} /> GPS fix is valid</label>
+              <div style={{ display: 'grid', gap: 7, marginTop: 8 }}>
+                <label className="form-help">GPS fix timestamp<input className="field form-input" type="datetime-local" aria-label="GPS fix timestamp" value={gps.gpsTimestamp} onChange={(event) => setGps({ ...gps, gpsTimestamp: event.target.value })} /></label>
+                <label className="form-help">Image capture timestamp<input className="field form-input" type="datetime-local" aria-label="Image capture timestamp" value={gps.capturedAt} onChange={(event) => setGps({ ...gps, capturedAt: event.target.value })} /></label>
+              </div>
+            </div>
+          </details>
+          {record && <div className="card analysis-result live-monitor-result">
+            <div className="card-heading"><div className="card-title">Latest Result</div></div>
+            <div className="result-row"><span>Prediction</span><strong>{record.disease_name || 'Inconclusive'}</strong></div>
+            <div className="result-row"><span>Score</span><strong>{score(record.prediction_score)}</strong></div>
+            <button className="button" style={{ marginTop: 12 }} onClick={() => navigate('/analysis')}>View analysis <ArrowRight size={13} /></button>
+          </div>}
         </div>
-        {record && <div className="analysis-result"><div className="card-title" style={{ margin: '15px 0 5px' }}>Latest result</div><div className="result-row"><span>Prediction</span><strong>{record.disease_name || 'Inconclusive'}</strong></div><div className="result-row"><span>Score</span><strong>{score(record.prediction_score)}</strong></div><button className="button" style={{ marginTop: 12 }} onClick={() => navigate('/analysis')}>View analysis <ArrowRight size={13} /></button></div>}
       </div>
     </div>
-    <div className="notice warning" style={{ marginTop: 14 }}><CircleHelp size={15} /><span>A model must be installed and loaded by the backend. No prediction is generated when model inference is unavailable.</span></div>
   </>
 }
 
 export function AnalysisPage() {
-  const [latest] = useState(() => {
+  const [latest, setLatest] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('latestAnalysis') || 'null') } catch { return null }
   })
+  const [file, setFile] = useState(null)
+  const [preview, setPreview] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
   const record = latest?.detection || latest
+  const onFile = (event) => {
+    const selected = event.target.files?.[0]
+    if (!selected) return
+    const validationError = imageValidationError(selected)
+    if (validationError) { setError(new Error(validationError)); event.target.value = ''; setFile(null); setPreview(''); setLatest(null); return }
+    setError(null)
+    setLatest(null)
+    if (preview) URL.revokeObjectURL(preview)
+    setFile(selected)
+    setPreview(URL.createObjectURL(selected))
+  }
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview) }, [preview])
+  const analyze = async () => {
+    if (!file) return
+    setBusy(true)
+    setError(null)
+    try {
+      const response = await api.predict(file)
+      setLatest(response)
+      sessionStorage.setItem('latestAnalysis', JSON.stringify(response))
+    } catch (cause) { setError(cause) } finally { setBusy(false) }
+  }
+  const recommendations = record?.treatment_recommendations ?? record?.recommendations
+  const recommendationValues = Array.isArray(recommendations)
+    ? recommendations
+    : typeof recommendations === 'string' && recommendations.trim()
+      ? [recommendations]
+      : []
+  const recommendationItems = recommendationValues
+    .map((item) => typeof item === 'string' ? item : item?.recommendation || item?.text)
+    .filter((item) => typeof item === 'string' && item.trim())
   return <>
-    <PageIntro eyebrow="Model output" title="AI disease analysis" description="Results shown here are returned by backend inference; this interface does not infer disease by itself." action={<Link to="/monitor" className="button"><Upload size={14} />Analyze an image</Link>} />
-    {!record ? <div className="card"><EmptyState title="No analysis available">Upload an image and run an inference request to see its model output here.</EmptyState></div> : <>
-      {latest.model_available === false && <div className="notice warning" style={{ marginBottom: 14 }}><AlertCircle size={15} /><span>The model is unavailable. No disease prediction was produced. Install a supported local model before analyzing images.</span></div>}
-      <div className="grid monitor-grid">
-        <div className="card"><div className="card-heading"><div><div className="card-title">Submitted crop image</div><div className="card-subtitle">{formatDate(record.created_at)}</div></div></div>{record.image_url ? <img src={api.imageUrl(record.image_url)} alt="Submitted crop" style={{ width: '100%', maxHeight: 440, objectFit: 'contain', borderRadius: 8, background: '#101713' }} /> : <EmptyState title="Image unavailable">The image file is not available from the backend.</EmptyState>}</div>
-        <div className="card"><div className="card-heading"><div><div className="card-title">Prediction result</div><div className="card-subtitle">Model scores are not calibrated probabilities</div></div></div>
-          <div className="result-row"><span>Crop</span><strong>{record.crop_name || 'Not identified'}</strong></div><div className="result-row"><span>Label</span><strong>{record.disease_name || 'Inconclusive'}</strong></div><div className="result-row"><span>Classification</span><strong>{record.classification || 'inconclusive'}</strong></div><div className="result-row"><span>Model prediction score</span><strong>{score(record.prediction_score)}</strong></div><div className="result-row"><span>Model</span><strong>{record.model_name || 'Unavailable'}</strong></div><div className="result-row"><span>Version</span><strong>{record.model_version || 'Unavailable'}</strong></div><div className="result-row"><span>Location</span><strong>{coords(record) ? `${record.latitude}, ${record.longitude}` : 'Location unavailable'}</strong></div>
-          {record.top_predictions?.length > 0 && <><div className="card-title" style={{ marginTop: 18, marginBottom: 7 }}>Alternative predictions</div>{record.top_predictions.slice(1).map((item) => <div className="result-row" key={item.label}><span>{item.label}</span><strong>{score(item.score)}</strong></div>)}</>}
-          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}><Link className="button" to={record.id ? `/history?id=${encodeURIComponent(record.id)}` : '/history'}>View history record</Link><Link className="button ghost" to="/recommendations">Guidance</Link></div>
-        </div>
+    <div className="analysis-page">
+      <div className="analysis-page-heading"><h1 className="page-title">AI Analysis</h1></div>
+      <div className="grid analysis-page-grid">
+        <section className="card analysis-upload-card" aria-labelledby="analysis-upload-heading">
+          <div className="card-heading"><div className="card-title" id="analysis-upload-heading">Crop image</div></div>
+          <div className="analysis-image-preview">
+            {preview
+              ? <img src={preview} alt="Selected crop leaf" />
+              : record?.image_url
+                ? <img src={api.imageUrl(record.image_url)} alt="Previously analyzed crop leaf" />
+                : <div className="analysis-preview-empty"><ImagePlus size={22} /><span>No image selected</span></div>}
+          </div>
+          <div className="camera-actions analysis-actions">
+            <input className="hidden-input" id="analysis-upload" type="file" accept="image/jpeg,image/png" onChange={onFile} />
+            <label className="button" htmlFor="analysis-upload"><Upload size={14} />Upload image</label>
+            <button className="button primary" disabled={!file || busy} onClick={analyze}>
+              {busy ? <RefreshCw size={14} className="spin" /> : <Crosshair size={14} />}
+              {busy ? 'Analyzing…' : 'Analyze image'}
+            </button>
+          </div>
+          {file && <div className="card-subtitle analysis-file-name">{file.name} · {(file.size / (1024 * 1024)).toFixed(2)} MB</div>}
+          {error && <div className="analysis-error" role="alert">{error.message || 'Analysis request failed.'}</div>}
+        </section>
+        <section className="card analysis-result-card" aria-labelledby="analysis-result-heading">
+          <div className="card-heading"><div className="card-title" id="analysis-result-heading">Analysis result</div></div>
+          {busy
+            ? <div className="analysis-result-empty" role="status">Analyzing image…</div>
+            : !record
+              ? <div className="analysis-result-empty">{error ? 'Analysis unavailable' : 'No result yet'}</div>
+              : <>
+                <div className="analysis-prediction">
+                  <span>Predicted disease class</span>
+                  <strong>{record.disease_name}</strong>
+                </div>
+                {Number.isFinite(record.prediction_score) && <div className="analysis-confidence">
+                  <span>Confidence</span>
+                  <strong>{score(record.prediction_score)}</strong>
+                </div>}
+                {record.top_predictions?.length > 1 && <div className="analysis-alternatives">
+                  {record.top_predictions.slice(1, 10).map((item) => <div className="analysis-alternative" key={item.label}>
+                    <span>{item.label}</span><strong>{score(item.score)}</strong>
+                  </div>)}
+                </div>}
+                {recommendationItems.length > 0 && <div className="analysis-recommendations">
+                  <div className="card-title">Recommendations</div>
+                  {recommendationItems.map((item, index) => <p key={`${index}-${item}`}>{item}</p>)}
+                </div>}
+                <div className="analysis-result-links">
+                  <Link className="button" to={record.id ? `/history?id=${encodeURIComponent(record.id)}` : '/history'}>View history</Link>
+                  <Link className="button ghost" to="/recommendations">Guidance</Link>
+                </div>
+              </>}
+        </section>
       </div>
-    </>}
+    </div>
   </>
 }
 
 export function MapPage() {
-  const [filters, setFilters] = useState({ crop: '', disease: '', from_date: '', to_date: '' })
+  const [filters, setFilters] = useState({ disease: '', from_date: '', to_date: '' })
   const [selected, setSelected] = useState(null)
   const [rows, setRows] = useState([])
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState(null)
+  const requestId = useRef(0)
   const load = useCallback(() => {
-    api.allLocations(filters).then((items) => { setError(null); setRows(items) }).catch(setError).finally(() => setBusy(false))
+    const currentRequest = ++requestId.current
+    api.allLocations(filters)
+      .then((items) => {
+        if (currentRequest === requestId.current) {
+          setError(null)
+          setRows(items)
+        }
+      })
+      .catch((cause) => {
+        if (currentRequest === requestId.current) setError(cause)
+      })
+      .finally(() => {
+        if (currentRequest === requestId.current) setBusy(false)
+      })
   }, [filters])
-  useEffect(() => { load() }, [load])
-  const center = selected && coords(selected) ? [selected.latitude, selected.longitude] : rows.length ? [rows[0].latitude, rows[0].longitude] : [20, 0]
+  useEffect(() => {
+    load()
+    return () => { requestId.current += 1 }
+  }, [load])
+  const refresh = () => {
+    setBusy(true)
+    setError(null)
+    load()
+  }
+  const updateFilter = (key, value) => {
+    setSelected(null)
+    setBusy(true)
+    setFilters((current) => ({ ...current, [key]: value }))
+  }
+  const mapRows = rows.filter((row) => row.gps_fix_valid === true && coords(row)
+    && row.latitude >= -90 && row.latitude <= 90
+    && row.longitude >= -180 && row.longitude <= 180)
+  const center = selected && mapRows.some((row) => row.id === selected.id)
+    ? [selected.latitude, selected.longitude]
+    : mapRows.length
+      ? [mapRows[0].latitude, mapRows[0].longitude]
+      : [20, 0]
   return <>
-    <PageIntro eyebrow="Spatial intelligence" title="Disease geolocation" description="Only backend records with validated GPS coordinates are shown on the map." />
-    <div className="filters">{[['crop', 'Crop name'], ['disease', 'Disease label']].map(([key, placeholder]) => <input key={key} className="field" placeholder={placeholder} value={filters[key]} onChange={(event) => setFilters({ ...filters, [key]: event.target.value })} />)}<input className="field" aria-label="From date" type="date" value={filters.from_date} onChange={(event) => setFilters({ ...filters, from_date: event.target.value })} /><input className="field" aria-label="To date" type="date" value={filters.to_date} onChange={(event) => setFilters({ ...filters, to_date: event.target.value })} /></div>
-    <ErrorNotice error={error} onRetry={load} />
-    <div className="map-layout">
-      <div className="card" style={{ padding: 10 }}><div className="map-canvas">{rows.length > 0 ? <Suspense fallback={<div className="chart-empty">Loading map…</div>}><DetectionMap rows={rows} selected={selected} onSelect={setSelected} center={center} /></Suspense> : <div className="chart-empty">{busy ? 'Loading locations…' : 'No detections with GPS coordinates.'}</div>}</div></div>
-      <div className="card"><div className="card-heading"><div><div className="card-title">Mapped detections</div><div className="card-subtitle">{rows.length} location record{rows.length === 1 ? '' : 's'}</div></div></div>
-        {rows.length ? <div className="map-list">{rows.map((row) => <button key={row.id} className="activity-item" onClick={() => setSelected(row)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 0, cursor: 'pointer' }}><MapPin size={15} color={row.classification === 'diseased' ? '#eb9471' : '#a9dc60'} /><div className="activity-main"><div className="activity-name">{row.disease_name}</div><div className="activity-meta">{row.crop_name || 'Unknown crop'} · {formatDate(row.created_at)}</div></div></button>)}</div> : <EmptyState title="No mapped detections">GPS coordinates are unavailable unless they were validly associated with an image.</EmptyState>}
+    <div className="disease-map-page">
+      <div className="disease-map-heading"><h1 className="page-title">Disease Map</h1></div>
+      <div className="filters disease-map-filters">
+        <input className="field" aria-label="Filter by disease class" placeholder="Disease class" value={filters.disease} onChange={(event) => updateFilter('disease', event.target.value)} />
+        <label className="disease-map-date">From<input className="field" aria-label="From date" type="date" value={filters.from_date} onChange={(event) => updateFilter('from_date', event.target.value)} /></label>
+        <label className="disease-map-date">To<input className="field" aria-label="To date" type="date" value={filters.to_date} onChange={(event) => updateFilter('to_date', event.target.value)} /></label>
+      </div>
+      <ErrorNotice error={error} onRetry={refresh} compact />
+      <div className="grid map-layout disease-map-layout">
+        <div className="card disease-map-card"><div className="map-canvas disease-map-canvas">
+          {error ? <div className="disease-map-empty">Map unavailable</div> : busy ? <div className="disease-map-empty">Loading map…</div> : mapRows.length
+            ? <Suspense fallback={<div className="disease-map-empty">Loading map…</div>}><DetectionMap rows={mapRows} selected={selected} onSelect={setSelected} center={center} /></Suspense>
+            : <div className="disease-map-empty">No GPS-tagged detections</div>}
+        </div></div>
+        <div className="card disease-map-list-card">
+          <div className="card-heading"><div className="card-title">Mapped detections</div><span className="badge neutral">{busy ? '…' : mapRows.length}</span></div>
+          {!busy && !error && mapRows.length ? <div className="map-list">{mapRows.map((row) => <button key={row.id} className={`activity-item disease-map-row${selected?.id === row.id ? ' selected' : ''}`} onClick={() => setSelected(row)}>
+            <MapPin size={15} aria-hidden="true" />
+            <div className="activity-main"><div className="activity-name">{row.disease_name}</div><div className="activity-meta">{formatDate(row.created_at)}</div></div>
+          </button>)}</div> : <div className="disease-map-empty disease-map-list-empty">{busy ? 'Loading detections…' : error ? 'Detections unavailable' : 'No GPS-tagged detections'}</div>}
+        </div>
       </div>
     </div>
   </>
@@ -214,40 +395,100 @@ export function HistoryPage() {
   const [busy, setBusy] = useState(true)
   const [detail, setDetail] = useState(null)
   const [exportError, setExportError] = useState(null)
+  const requestId = useRef(0)
   const load = useCallback(() => {
-    api.detections({ ...filters, search, page, page_size: 10 }).then((result) => { setError(null); setData(result) }).catch(setError).finally(() => setBusy(false))
+    const currentRequest = ++requestId.current
+    api.detections({ ...filters, search, page, page_size: 10 })
+      .then((result) => {
+        if (currentRequest === requestId.current) setData(result)
+      })
+      .catch((cause) => {
+        if (currentRequest === requestId.current) setError(cause)
+      })
+      .finally(() => {
+        if (currentRequest === requestId.current) setBusy(false)
+      })
   }, [filters, search, page])
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+    return () => { requestId.current += 1 }
+  }, [load])
+  const updateFilter = (key, value) => {
+    setBusy(true)
+    setError(null)
+    setPage(1)
+    setFilters((current) => ({ ...current, [key]: value }))
+  }
+  const retry = () => {
+    setBusy(true)
+    setError(null)
+    load()
+  }
   useEffect(() => {
     const id = searchParams.get('id')
     if (id) api.detection(id).then(setDetail).catch(setError)
   }, [searchParams])
   const closeDetail = () => { setDetail(null); setSearchParams({}) }
+  const openDetail = (row) => {
+    setDetail(row)
+    setSearchParams({ id: row.id })
+  }
   const exportCsv = async () => {
     setExportError(null)
     try { await exportDetections({ ...filters, search }) } catch (cause) { setExportError(cause) }
   }
   const items = data?.items || []
   return <>
-    <PageIntro eyebrow="Record archive" title="Detection history" description="Search and review saved inference records. Data is served by the configured backend." action={<button className="button" onClick={exportCsv}><ArrowDownToLine size={14} />Export CSV</button>} />
-    {exportError && <ErrorNotice error={exportError} />}
-    <div className="card">
-      <div className="filters">
-        <label className="field search-field" style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Search size={14} /><input value={search} onChange={(event) => { setPage(1); setSearch(event.target.value) }} placeholder="Search crop or disease" style={{ background: 'none', border: 0, color: 'inherit', outline: 0, width: '100%' }} /></label>
-        <input className="field" placeholder="Crop" value={filters.crop} onChange={(event) => { setPage(1); setFilters({ ...filters, crop: event.target.value }) }} />
-        <input className="field" placeholder="Disease" value={filters.disease} onChange={(event) => { setPage(1); setFilters({ ...filters, disease: event.target.value }) }} />
-        <input className="field" aria-label="From date" type="date" value={filters.from_date} onChange={(event) => { setPage(1); setFilters({ ...filters, from_date: event.target.value }) }} />
-        <input className="field" aria-label="To date" type="date" value={filters.to_date} onChange={(event) => { setPage(1); setFilters({ ...filters, to_date: event.target.value }) }} />
+    <div className="history-page">
+      <div className="history-heading">
+        <h1 className="page-title">Detection History</h1>
+        <button className="button" onClick={exportCsv}><ArrowDownToLine size={14} />Export CSV</button>
       </div>
-      {error && <ErrorNotice error={error} onRetry={load} />}
-      <div className="table-wrap"><table className="data-table"><thead><tr><th>Detection</th><th>Crop / disease</th><th>Classification</th><th>Model score</th><th>Date & time</th><th>GPS</th><th /></tr></thead><tbody>
-        {!busy && items.map((row) => <tr key={row.id}><td className="table-primary">{row.id.slice(0, 8)}</td><td><div className="table-primary">{row.crop_name || 'Unknown crop'}</div><div className="table-secondary">{row.disease_name || 'Inconclusive'}</div></td><td><span className={`badge ${row.classification === 'diseased' ? 'disease' : 'neutral'}`}>{row.classification || 'inconclusive'}</span></td><td>{score(row.prediction_score)}</td><td>{formatDate(row.created_at)}</td><td>{coords(row) ? `${row.latitude.toFixed(4)}, ${row.longitude.toFixed(4)}` : 'Unavailable'}</td><td><button className="button" onClick={() => setDetail(row)}>Details</button></td></tr>)}
-      </tbody></table></div>
-      {!busy && !items.length && <EmptyState title="No matching records">Try changing your filters, or analyze an image to create the first real record.</EmptyState>}
-      {busy && <div style={{ display: 'grid', gap: 10, padding: 16 }}><div className="loading-line" /><div className="loading-line" /><div className="loading-line" /></div>}
-      <div className="pagination"><span>{data ? `${data.total} record${data.total === 1 ? '' : 's'} · page ${data.page} of ${Math.max(1, data.pages)}` : 'Loading records…'}</span><div className="pagination-controls"><button className="button" aria-label="Previous page" disabled={!data || page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}><ChevronLeft size={14} /></button><button className="button" aria-label="Next page" disabled={!data || page >= data.pages} onClick={() => setPage((current) => current + 1)}><ChevronRight size={14} /></button></div></div>
+      {exportError && <div className="history-message" role="alert">{exportError.message || 'Export failed.'}</div>}
+      <section className="card history-card" aria-label="Detection records">
+        <div className="filters history-filters">
+          <label className="field search-field history-search"><Search size={14} aria-hidden="true" /><input aria-label="Search crop or disease" value={search} onChange={(event) => { setBusy(true); setError(null); setPage(1); setSearch(event.target.value) }} placeholder="Search crop or disease" /></label>
+          <input className="field" aria-label="Filter by crop" placeholder="Crop" value={filters.crop} onChange={(event) => updateFilter('crop', event.target.value)} />
+          <input className="field" aria-label="Filter by disease" placeholder="Disease" value={filters.disease} onChange={(event) => updateFilter('disease', event.target.value)} />
+          <label className="history-date">From<input className="field" aria-label="From date" type="date" value={filters.from_date} onChange={(event) => updateFilter('from_date', event.target.value)} /></label>
+          <label className="history-date">To<input className="field" aria-label="To date" type="date" value={filters.to_date} onChange={(event) => updateFilter('to_date', event.target.value)} /></label>
+        </div>
+        {error && <div className="history-message" role="alert"><span>{error.message || 'Unable to load records.'}</span><button className="button" onClick={retry}>Retry</button></div>}
+        {!busy && !error && items.length > 0 && <>
+          <div className="history-list-head" aria-hidden="true"><span>Detection</span><span>Confidence</span><span>Date & time</span><span>GPS</span><span /></div>
+          <div className="history-record-list">
+            {items.map((row) => {
+              const gpsValid = row.gps_fix_valid === true && coords(row)
+              return <article className="history-record" key={row.id}>
+                <div className="history-detection">
+                  {row.image_url
+                    ? <img className="history-thumb" src={api.imageUrl(row.image_url)} alt="" />
+                    : <div className="history-thumb history-thumb-empty" aria-hidden="true" />}
+                  <div className="history-record-main">
+                    <div className="history-disease">{row.disease_name}</div>
+                    <div className="history-meta">{row.crop_name || 'Unknown crop'} · {row.classification}</div>
+                  </div>
+                </div>
+                <div className="history-field"><span className="history-mobile-label">Confidence</span>{score(row.prediction_score)}</div>
+                <div className="history-field"><span className="history-mobile-label">Date & time</span>{formatDate(row.created_at)}</div>
+                <div className="history-field history-gps"><span className="history-mobile-label">GPS</span><span className={`badge ${gpsValid ? '' : 'neutral'}`}>{gpsValid ? 'GPS tagged' : 'No GPS'}</span></div>
+                <div className="history-actions"><button className="button" onClick={() => openDetail(row)}>Details</button></div>
+              </article>
+            })}
+          </div>
+        </>}
+        {!busy && !error && !items.length && <div className="history-empty">No matching records</div>}
+        {busy && <div className="history-loading" role="status">Loading records…</div>}
+        <div className="pagination history-pagination">
+          <span>{data ? `${data.total} record${data.total === 1 ? '' : 's'} · page ${data.page} of ${Math.max(1, data.pages)}` : ''}</span>
+          <div className="pagination-controls">
+            <button className="button" aria-label="Previous page" disabled={busy || !data || page <= 1} onClick={() => { setBusy(true); setError(null); setPage((current) => Math.max(1, current - 1)) }}><ChevronLeft size={14} /></button>
+            <button className="button" aria-label="Next page" disabled={busy || !data || page >= data.pages} onClick={() => { setBusy(true); setError(null); setPage((current) => current + 1) }}><ChevronRight size={14} /></button>
+          </div>
+        </div>
+      </section>
+      {detail && <div className="modal-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) closeDetail() }}><section className="modal" role="dialog" aria-modal="true" aria-label="Detection details"><div className="modal-header"><div><div className="card-title">Detection details</div><div className="card-subtitle">{detail.id}</div></div><button className="button" onClick={closeDetail}>Close</button></div>{detail.image_url && <img src={api.imageUrl(detail.image_url)} alt="Detected crop" style={{ maxWidth: '100%', maxHeight: 250, display: 'block', marginBottom: 14, borderRadius: 8 }} />}{[['Crop', detail.crop_name], ['Disease', detail.disease_name], ['Classification', detail.classification], ['Model score', score(detail.prediction_score)], ['Date', formatDate(detail.created_at)], ['Location', coords(detail) ? `${detail.latitude}, ${detail.longitude}` : 'Location unavailable'], ['Model', detail.model_name], ['Version', detail.model_version]].map(([label, value]) => <div className="result-row" key={label}><span>{label}</span><strong>{value || '—'}</strong></div>)}</section></div>}
     </div>
-    {detail && <div className="modal-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) closeDetail() }}><section className="modal" role="dialog" aria-modal="true" aria-label="Detection details"><div className="modal-header"><div><div className="card-title">Detection details</div><div className="card-subtitle">{detail.id}</div></div><button className="button" onClick={closeDetail}>Close</button></div>{detail.image_url && <img src={api.imageUrl(detail.image_url)} alt="Detected crop" style={{ maxWidth: '100%', maxHeight: 250, display: 'block', marginBottom: 14, borderRadius: 8 }} />}{[['Crop', detail.crop_name], ['Disease', detail.disease_name], ['Classification', detail.classification], ['Model score', score(detail.prediction_score)], ['Date', formatDate(detail.created_at)], ['Location', coords(detail) ? `${detail.latitude}, ${detail.longitude}` : 'Location unavailable'], ['Model', detail.model_name], ['Version', detail.model_version]].map(([label, value]) => <div className="result-row" key={label}><span>{label}</span><strong>{value || '—'}</strong></div>)}</section></div>}
   </>
 }
 
@@ -256,46 +497,107 @@ export function RecommendationsPage() {
     try { return JSON.parse(sessionStorage.getItem('latestAnalysis') || 'null') } catch { return null }
   })
   const record = latest?.detection || latest
+  const recommendations = record?.treatment_recommendations ?? record?.recommendations
+  const recommendationValues = Array.isArray(recommendations)
+    ? recommendations
+    : typeof recommendations === 'string' && recommendations.trim()
+      ? [recommendations]
+      : []
+  const recommendationItems = recommendationValues
+    .map((item) => typeof item === 'string'
+      ? { title: '', content: item }
+      : { title: item?.title || '', content: item?.recommendation || item?.text || '' })
+    .filter((item) => typeof item.content === 'string' && item.content.trim())
   return <>
-    <PageIntro eyebrow="Responsible guidance" title="Recommendations" description="Visual model output is a screening aid, not a confirmed diagnosis or a substitute for local expertise." />
-    <div className="notice warning" style={{ marginBottom: 15 }}><ShieldAlert size={15} /><span>Do not make treatment decisions from an AI prediction alone. Verify serious or unfamiliar symptoms with a qualified agricultural expert.</span></div>
-    {record?.disease_name && <div className="card" style={{ marginBottom: 14 }}><div className="card-heading"><div><div className="card-title">Current model label: {record.disease_name}</div><div className="card-subtitle">{record.crop_name || 'Crop not identified'} · {score(record.prediction_score)} prediction score</div></div><span className="badge neutral">Unverified</span></div><p className="page-description" style={{ margin: 0 }}>A maintained, verified crop-specific guidance source is not configured for this label. No disease-specific treatment recommendation is provided.</p></div>}
-    <div className="grid recommendation-grid">
-      <div className="card rec-card"><h3>Careful next steps</h3><p>Record the affected area and capture a clear image of the full plant and leaf details in consistent lighting. Compare symptoms across more than one plant and revisit the field to observe changes.</p></div>
-      <div className="card rec-card"><h3>Verify before action</h3><p>Consult your local agricultural extension service or a qualified crop specialist to confirm a suspected disease. Keep the original image and note the date and field conditions.</p></div>
-      <div className="card rec-card"><h3>Prevention and monitoring</h3><p>Follow crop-specific, locally approved integrated pest-management guidance. Maintain routine field scouting and record observations; do not apply treatments based only on an image classifier.</p></div>
-      <div className="card rec-card"><h3>Information source status</h3><p>No independently verified, maintained disease reference source is configured in this installation. Specific treatment instructions and chemical dosages are intentionally not shown.</p></div>
+    <div className="recommendations-page">
+      <div className="recommendations-heading">
+        <div>
+          <h1 className="page-title">Recommendations</h1>
+          {recommendationItems.length > 0 && record?.disease_name && <div className="recommendations-context">{record.disease_name}</div>}
+        </div>
+      </div>
+      {recommendationItems.length > 0
+        ? <section className="card recommendations-card" aria-label="Recommendations">
+          <div className="recommendations-list">
+            {recommendationItems.map((item, index) => <article className="recommendation-item" key={`${index}-${item.title}-${item.content}`}>
+              {item.title && <h2>{item.title}</h2>}
+              <p>{item.content}</p>
+            </article>)}
+          </div>
+        </section>
+        : <div className="recommendations-empty">No recommendations available</div>}
     </div>
   </>
 }
 
 export function SettingsPage() {
   const [saved, setSaved] = useState(false)
-  const [endpoint, setEndpoint] = useState(localStorage.getItem('cameraEndpoint') || '')
+  const [backendUrl, setBackendUrl] = useState(api.baseUrl)
+  const [cameraEndpoint, setCameraEndpoint] = useState(localStorage.getItem('cameraEndpoint') || '')
   const [refresh, setRefresh] = useState(localStorage.getItem('refreshInterval') || '30000')
   const [mapStyle, setMapStyle] = useState(localStorage.getItem('mapStyle') || 'standard')
+  const [formError, setFormError] = useState('')
+  const connection = useLoad(() => api.health(), [])
   const save = (event) => {
     event.preventDefault()
-    localStorage.setItem('cameraEndpoint', endpoint.trim())
-    localStorage.setItem('refreshInterval', refresh)
-    localStorage.setItem('mapStyle', mapStyle)
-    setSaved(true)
-    window.setTimeout(() => window.location.reload(), 700)
+    let parsedUrl
+    try {
+      parsedUrl = new URL(backendUrl.trim())
+      if (!['http:', 'https:'].includes(parsedUrl.protocol) || !parsedUrl.hostname || parsedUrl.username || parsedUrl.password || parsedUrl.search || parsedUrl.hash) {
+        throw new Error('invalid')
+      }
+    } catch {
+      setFormError('Enter a valid HTTP or HTTPS backend URL.')
+      setSaved(false)
+      return
+    }
+    const normalizedUrl = `${parsedUrl.origin}${parsedUrl.pathname.replace(/\/+$/, '')}`
+    try {
+      if (normalizedUrl === api.defaultBaseUrl) localStorage.removeItem('apiBaseUrl')
+      else localStorage.setItem('apiBaseUrl', normalizedUrl)
+      localStorage.setItem('cameraEndpoint', cameraEndpoint.trim())
+      localStorage.setItem('refreshInterval', refresh)
+      localStorage.setItem('mapStyle', mapStyle)
+      setBackendUrl(normalizedUrl)
+      setFormError('')
+      setSaved(true)
+      window.setTimeout(() => window.location.reload(), 900)
+    } catch {
+      setFormError('Unable to save settings in this browser.')
+      setSaved(false)
+    }
   }
   return <>
-    <PageIntro eyebrow="Workspace configuration" title="Settings" description="Configure browser display preferences and review server-side environment settings." />
-    <form onSubmit={save} className="grid settings-layout">
-      <div className="card"><div className="card-heading"><div><div className="card-title">Device and display</div><div className="card-subtitle">These preferences are stored in this browser only.</div></div></div>
-        <label className="form-row"><div className="form-label">ESP32-CAM endpoint</div><div className="form-help">Saved for future integration planning. The UI does not connect to or proxy an endpoint.</div><input className="field form-input" type="url" placeholder="http://camera.local/stream" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} /></label>
-        <label className="form-row"><div className="form-label">Status refresh interval</div><div className="form-help">How often backend health is refreshed.</div><select className="select form-input" value={refresh} onChange={(event) => setRefresh(event.target.value)}><option value="10000">10 seconds</option><option value="30000">30 seconds</option><option value="60000">1 minute</option><option value="300000">5 minutes</option></select></label>
-        <label className="form-row"><div className="form-label">Map tiles</div><div className="form-help">Map display provider preference; OpenStreetMap tiles are used in this version.</div><select className="select form-input" value={mapStyle} onChange={(event) => setMapStyle(event.target.value)}><option value="standard">Standard (OpenStreetMap)</option></select></label>
-        <div style={{ paddingTop: 14, display: 'flex', alignItems: 'center', gap: 12 }}><button className="button primary" type="submit"><Check size={14} />Save preferences</button>{saved && <span className="card-subtitle">Saved. Applying preferences…</span>}</div>
-      </div>
-      <div className="card"><div className="card-heading"><div><div className="card-title">Backend connection</div><div className="card-subtitle">API URL is set at build time.</div></div></div>
-        <div className="form-row"><div className="form-label">VITE_API_BASE_URL</div><div className="form-help">Set this in your frontend environment (for example, in Vercel project settings), then rebuild. It cannot be safely changed at runtime.</div><code className="field form-input" style={{ display: 'block', overflowWrap: 'anywhere' }}>{api.baseUrl}</code></div>
-        <div className="form-row"><div className="form-label">Backend environment</div><div className="form-help">Configure allowed CORS origins, local storage path, model directory, and the model confidence threshold on the backend. Never put server secrets in frontend variables.</div></div>
-        <div className="form-row"><div className="form-label">Hardware integration</div><div className="form-help">ESP32-CAM, GPS fix verification, and APM 2.8 telemetry are currently unavailable. This application does not send flight-control or motor-arming commands.</div></div>
-      </div>
-    </form>
+    <div className="settings-page">
+      <div className="settings-heading"><h1 className="page-title">Settings</h1></div>
+      <form onSubmit={save} className="grid settings-layout">
+        <section className="card settings-card" aria-labelledby="settings-backend-title">
+          <div className="card-heading settings-card-heading">
+            <div className="card-title" id="settings-backend-title">Backend configuration</div>
+            <div className={`settings-connection ${connection.busy ? 'checking' : connection.error ? 'offline' : 'online'}`} role="status">
+              <span className="status-dot" />{connection.busy ? 'Checking' : connection.error ? 'Unavailable' : 'Connected'}
+              <button className="button ghost settings-refresh" type="button" onClick={connection.refresh} disabled={connection.busy} aria-label="Refresh connection status"><RefreshCw size={13} /></button>
+            </div>
+          </div>
+          <label className="form-row settings-url-field">
+            <span className="form-label">Backend URL</span>
+            <input className="field form-input" type="text" inputMode="url" autoCapitalize="none" spellCheck="false" value={backendUrl} onChange={(event) => { setBackendUrl(event.target.value); setSaved(false); setFormError('') }} aria-describedby="backend-url-help" />
+            <span className="form-help" id="backend-url-help">Uses the build configuration unless overridden here.</span>
+          </label>
+          {formError && <div className="settings-feedback error" role="alert">{formError}</div>}
+          {saved && <div className="settings-feedback success" role="status">Settings saved.</div>}
+        </section>
+        <section className="card settings-card" aria-labelledby="settings-preferences-title">
+          <div className="card-heading"><div className="card-title" id="settings-preferences-title">Preferences</div></div>
+          <label className="form-row"><span className="form-label">Camera endpoint</span><input className="field form-input" type="url" placeholder="http://camera.local/stream" value={cameraEndpoint} onChange={(event) => setCameraEndpoint(event.target.value)} /></label>
+          <label className="form-row"><span className="form-label">Status refresh interval</span><select className="select form-input" value={refresh} onChange={(event) => setRefresh(event.target.value)}><option value="10000">10 seconds</option><option value="30000">30 seconds</option><option value="60000">1 minute</option><option value="300000">5 minutes</option></select></label>
+          <label className="form-row"><span className="form-label">Map tiles</span><select className="select form-input" value={mapStyle} onChange={(event) => setMapStyle(event.target.value)}><option value="standard">Standard (OpenStreetMap)</option></select></label>
+        </section>
+        <div className="settings-actions">
+          <button className="button primary" type="submit"><Check size={14} />Save settings</button>
+          <span className="form-help">Preferences are stored in this browser.</span>
+        </div>
+      </form>
+    </div>
   </>
 }
