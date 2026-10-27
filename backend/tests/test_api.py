@@ -54,6 +54,49 @@ def test_missing_detection_returns_404(client):
     assert response.json()["detail"] == "Detection record not found."
 
 
+def test_latest_uploaded_image_is_retrievable(client, monkeypatch):
+    class ReadyModel:
+        available = True
+
+        def status(self):
+            return {"available": True, "status": "available", "name": "Test model", "version": "test", "message": "ready"}
+
+        def infer(self, image_bytes):
+            return Inference(
+                crop_name="Tomato",
+                disease_name="Early Blight",
+                classification="diseased",
+                prediction_score=0.84,
+                top_predictions=[{"label": "Tomato with Early Blight", "score": 0.84}],
+                model_name="Test model",
+                model_version="test",
+            )
+
+    monkeypatch.setattr(main, "model", ReadyModel())
+    uploaded_images = []
+    for color in ("green", "red"):
+        image = BytesIO()
+        Image.new("RGB", (32, 32), color).save(image, format="JPEG")
+        image_bytes = image.getvalue()
+        uploaded_images.append(image_bytes)
+        response = client.post(
+            "/api/predict",
+            files={"file": (f"{color}.jpg", image_bytes, "image/jpeg")},
+        )
+        assert response.status_code == 201
+
+    latest = client.get("/api/detections", params={"page": 1, "page_size": 1}).json()["items"][0]
+    assert latest["image_url"]
+    image_response = client.get(latest["image_url"])
+    assert image_response.status_code == 200
+    assert image_response.content == uploaded_images[-1]
+
+
+def test_missing_uploaded_image_returns_404(client):
+    response = client.get("/api/images/00000000000000000000000000000000.jpg")
+    assert response.status_code == 404
+
+
 def test_predict_refuses_when_model_is_not_configured(client):
     image = BytesIO()
     Image.new("RGB", (32, 32), "green").save(image, format="PNG")

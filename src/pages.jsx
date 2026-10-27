@@ -6,6 +6,7 @@ import {
   MapPin, RefreshCw, Search, ShieldAlert, Upload,
 } from 'lucide-react'
 import { api, exportDetections } from './api.js'
+import { getLatestDetection, scheduleMonitorRefresh } from './monitoring.js'
 
 const ActivityChart = lazy(() => import('./ActivityChart.jsx'))
 const DetectionMap = lazy(() => import('./DetectionMap.jsx'))
@@ -116,13 +117,18 @@ export function OverviewPage() {
 export function MonitorPage() {
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState('')
-  const [result, setResult] = useState(() => {
-    try { return JSON.parse(sessionStorage.getItem('latestAnalysis') || 'null') } catch { return null }
-  })
+  const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
-  const deviceStatus = useLoad(() => api.status(), [])
+  const latest = useLoad(() => getLatestDetection(api.detections), [])
+  const [failedRemoteImageUrl, setFailedRemoteImageUrl] = useState('')
   const navigate = useNavigate()
+  useEffect(() => {
+    const timer = scheduleMonitorRefresh(latest.refresh)
+    return () => window.clearInterval(timer)
+  }, [latest.refresh])
+  const record = latest.data || result
+  const remoteImageUrl = record?.image_url ? api.imageUrl(record.image_url) : ''
   const onFile = (event) => {
     const selected = event.target.files?.[0]
     if (!selected) return
@@ -144,13 +150,13 @@ export function MonitorPage() {
       sessionStorage.setItem('latestAnalysis', JSON.stringify(response))
     } catch (cause) { setError(cause) } finally { setBusy(false) }
   }
-  const record = result?.detection || result
-  const cameraStatus = getOverviewStatus(deviceStatus.data?.camera)
+  const cameraAvailable = Boolean(remoteImageUrl) && remoteImageUrl !== failedRemoteImageUrl
+  const cameraStatus = cameraAvailable ? 'Available' : latest.busy && !record ? null : 'Unavailable'
   const cameraPlaceholder = cameraStatus === 'Available'
     ? 'Feed unavailable'
     : cameraStatus === 'Unavailable'
       ? 'Camera unavailable'
-      : deviceStatus.busy
+      : latest.busy
         ? 'Checking camera'
         : 'Camera status unavailable'
   return <>
@@ -163,8 +169,8 @@ export function MonitorPage() {
             {cameraStatus && <span className={`badge ${cameraStatus === 'Available' ? '' : 'neutral'}`}>{cameraStatus}</span>}
           </div>
           <div className="camera-view live-monitor-camera-view">
-            {preview
-              ? <img className="preview-image" src={preview} alt="Selected crop for analysis" />
+            {preview || cameraAvailable
+              ? <img className="preview-image" src={preview || remoteImageUrl} alt={preview ? 'Selected crop for analysis' : 'Latest camera image'} onError={() => { if (!preview) setFailedRemoteImageUrl(remoteImageUrl) }} />
               : <div className="camera-placeholder"><Camera size={27} /><strong>{cameraPlaceholder}</strong></div>}
           </div>
           <div className="camera-actions live-monitor-actions">
@@ -178,9 +184,9 @@ export function MonitorPage() {
         <div className="live-monitor-side">
           <div className="card">
             <div className="card-heading"><div className="card-title">Drone Status</div></div>
-            <ErrorNotice error={deviceStatus.error} onRetry={deviceStatus.refresh} compact />
-            {!deviceStatus.error && <div className="status-list">
-              <StatusIndicator label="Camera" value={deviceStatus.data?.camera?.available} loading={deviceStatus.busy} />
+            <ErrorNotice error={latest.error} onRetry={latest.refresh} compact />
+            {!latest.error && <div className="status-list">
+              <StatusIndicator label="Camera" value={cameraAvailable} loading={latest.busy && !record} />
             </div>}
           </div>
           {record && <div className="card analysis-result live-monitor-result">
