@@ -7,12 +7,12 @@ DroneCrop AI is a responsive crop-imaging dashboard with a React/Vite frontend a
 | Integration | Status |
 | --- | --- |
 | Dashboard, monitoring, analysis, map, history, recommendations, settings | Implemented |
-| Image upload and server-side validation | Implemented; inference requires an installed model |
+| Image upload and server-side validation | Implemented; inference requires `MODEL_PATH` to point to a compatible local model |
 | Detection history, filters, pagination, CSV export, stats | Implemented with SQLite |
 | GPS association | Optional coordinates can be submitted with an image; no GPS receiver is connected |
 | ESP32-CAM | Not connected; camera capture and monitoring controls remain unavailable |
 | APM 2.8 telemetry | Not connected; no flight-control or motor-arming commands exist |
-| Pretrained model weights | Not installed; no prediction is fabricated when unavailable |
+| Plant disease classifier | Bundled under `backend/models/plantvillage-mobilenetv2`; configure `MODEL_PATH` to enable inference |
 | Vercel / Render | Configuration and deployment guidance included; not deployed from this workspace |
 
 ## Architecture
@@ -80,9 +80,13 @@ Frontend variables are documented in [`.env.example`](./.env.example):
 
 Never place server-side credentials or private keys in frontend variables.
 
-## Pretrained model selection and limitations
+## Bundled model and limitations
 
-No weights are bundled or activated. A model candidate was reviewed at [Hugging Face: `linkanjarad/mobilenet_v2_1.0_224-plant-disease-identification`](https://huggingface.co/linkanjarad/mobilenet_v2_1.0_224-plant-disease-identification). Its model card identifies a PyTorch/Transformers MobileNetV2 image classifier, fine-tuned on the PlantVillage dataset, with a 224-pixel image input and a 9,335,093-byte `pytorch_model.bin`. Its published config contains these 38 labels:
+The repository includes a MobileNetV2 classifier at `backend/models/plantvillage-mobilenetv2`, with its configuration, preprocessing settings and weights. Set `MODEL_PATH` to this directory to load it at backend startup; for a Render service whose root directory is `backend`, use `models/plantvillage-mobilenetv2`. The checkpoint is stored directly in Git so deployment checkouts receive the model weights rather than an unresolved Git LFS pointer. Runtime dependencies are listed in `backend/requirements.txt`.
+
+The bundled model provides 38 PlantVillage classes for 14 crops. **Rice is not among its labels.** The model card reports high accuracy on held-out PlantVillage images, but field imagery differs; outputs are screening suggestions only. Classifier scores returned by this API are raw softmax model scores and should not be described as calibrated confidence.
+
+An unrelated external model candidate was also reviewed at [Hugging Face: `linkanjarad/mobilenet_v2_1.0_224-plant-disease-identification`](https://huggingface.co/linkanjarad/mobilenet_v2_1.0_224-plant-disease-identification). Its model card identifies a PyTorch/Transformers MobileNetV2 image classifier, fine-tuned on the PlantVillage dataset, with a 224-pixel image input and a 9,335,093-byte `pytorch_model.bin`. Its published config contains these 38 labels:
 
 - Apple: `Apple Scab`, `Apple with Black Rot`, `Cedar Apple Rust`, `Healthy Apple`
 - Blueberry: `Healthy Blueberry Plant`
@@ -101,17 +105,17 @@ No weights are bundled or activated. A model candidate was reviewed at [Hugging 
 
 **Rice is not among its labels.**
 
-The published card reports 95.41% evaluation accuracy, but this is the card's reported metric, not a calibrated probability or a guarantee on drone imagery. PlantVillage-style image coverage and field imagery differ; outputs are screening suggestions only. Classifier scores returned by this API are raw softmax model scores and should not be described as calibrated confidence.
+The external candidate's published card reports 95.41% evaluation accuracy; this is the card's reported metric, not a calibrated probability or a guarantee on drone imagery.
 
-The candidate's Hugging Face metadata states `license: other` and does not provide clear usage terms in the model card. **For that reason, this project does not download, redistribute or enable those weights.** Verify the applicable model and dataset usage rights before adoption. The candidate's verified output class names are available in its upstream `config.json`; they are read from local model configuration at runtime rather than duplicated or guessed in this project.
+The external candidate's Hugging Face metadata states `license: other` and does not provide clear usage terms in the model card. **Those external weights are not downloaded or enabled by this project.** Verify applicable model and dataset usage rights before adopting other models.
 
-When a suitable, licensed classifier is selected, install compatible CPU or GPU versions of `torch` and `transformers`, then set `MODEL_PATH` to a local folder containing at least:
+To use a different compatible classifier, install compatible CPU or GPU versions of `torch` and `transformers`, then set `MODEL_PATH` to a local folder containing at least:
 
 - `config.json` with the classifier architecture and `id2label` mapping
 - `preprocessor_config.json` with the model's actual image preprocessing settings
 - `pytorch_model.bin` or `model.safetensors` with the trained weights
 
-The adapter loads a model once at process startup, uses its processor and labels, returns up to three raw-score predictions, and marks results below the configured threshold inconclusive. Do not point it at an unreviewed or unlicensed model. The deployment platform must have enough memory and disk for the model and its inference framework. No model inference can be tested until licensed model files and optional packages are installed.
+The adapter loads a model once at process startup, uses its processor and labels, returns up to three raw-score predictions, and marks results below the configured threshold inconclusive. Do not point it at an unreviewed or unlicensed model. The deployment platform must have enough memory and disk for the model and its inference framework.
 
 ## API
 

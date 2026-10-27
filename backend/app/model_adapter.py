@@ -120,7 +120,7 @@ class DiseaseModel:
             crop = None
         else:
             disease = _disease_from_label(predicted_label)
-            classification = "healthy" if predicted_label.lower().startswith("healthy ") else "diseased"
+            classification = "healthy" if _is_healthy_label(predicted_label) else "diseased"
         return Inference(
             crop_name=crop,
             disease_name=disease,
@@ -133,6 +133,14 @@ class DiseaseModel:
 
 
 def _crop_from_label(label: str) -> str | None:
+    if "___" in label:
+        crop = label.split("___", 1)[0].strip()
+        crop_aliases = {
+            "cherry_(including_sour)": "Cherry",
+            "corn_(maize)": "Corn",
+            "pepper,_bell": "Bell Pepper",
+        }
+        return crop_aliases.get(crop.casefold(), crop.replace("_", " ").strip().title()) or None
     if label.casefold().startswith("healthy "):
         crop = re.sub(r"\s+plant$", "", label[8:], flags=re.IGNORECASE).strip()
         return crop or None
@@ -150,9 +158,19 @@ def _crop_from_label(label: str) -> str | None:
 
 
 def _disease_from_label(label: str) -> str:
+    if "___" in label:
+        crop, disease = label.split("___", 1)
+        if disease.casefold() == "healthy":
+            crop_name = _crop_from_label(label)
+            return f"Healthy {crop_name}" if crop_name else label
+        return re.sub(r"_+", " ", disease).strip()
     if label.lower().startswith("healthy "):
         crop = _crop_from_label(label)
         return f"Healthy {crop}" if crop else label
     if " with " in label:
         return label.split(" with ", 1)[1]
     return label
+
+
+def _is_healthy_label(label: str) -> bool:
+    return label.casefold().startswith("healthy ") or label.casefold().endswith("___healthy")

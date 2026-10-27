@@ -22,3 +22,4 @@ models/plantvillage-mobilenetv2/*.md
 models/plantvillage-mobilenetv2/*.txt
 models/plantvillage-mobilenetv2/*.bin
 models/plantvillage-mobilenetv2/.gitattributes
+!models/plantvillage-mobilenetv2/.gitattributes
