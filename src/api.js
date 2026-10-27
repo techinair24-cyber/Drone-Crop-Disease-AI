@@ -62,16 +62,9 @@ export const api = {
     } while (page <= pages)
     return items
   },
-  predict: (file, gps = {}) => {
+  predict: (file) => {
     const form = new FormData()
     form.append('file', file)
-    if (gps.latitude) form.append('latitude', gps.latitude)
-    if (gps.longitude) form.append('longitude', gps.longitude)
-    if (gps.latitude && gps.longitude) {
-      form.append('gps_fix_valid', String(gps.fixValid))
-      if (gps.gpsTimestamp) form.append('gps_timestamp', new Date(gps.gpsTimestamp).toISOString())
-      if (gps.capturedAt) form.append('captured_at', new Date(gps.capturedAt).toISOString())
-    }
     return request('/api/predict', { method: 'POST', body: form })
   },
   imageUrl: (path) => path?.startsWith('http') ? path : `${getApiBase()}${path || ''}`,

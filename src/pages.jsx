@@ -121,7 +121,6 @@ export function MonitorPage() {
   })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
-  const [gps, setGps] = useState({ latitude: '', longitude: '', fixValid: false, gpsTimestamp: '', capturedAt: '' })
   const deviceStatus = useLoad(() => api.status(), [])
   const navigate = useNavigate()
   const onFile = (event) => {
@@ -140,7 +139,7 @@ export function MonitorPage() {
     if (!file) return
     setBusy(true); setError(null)
     try {
-      const response = await api.predict(file, gps)
+      const response = await api.predict(file)
       setResult(response)
       sessionStorage.setItem('latestAnalysis', JSON.stringify(response))
     } catch (cause) { setError(cause) } finally { setBusy(false) }
@@ -154,7 +153,6 @@ export function MonitorPage() {
       : deviceStatus.busy
         ? 'Checking camera'
         : 'Camera status unavailable'
-  const hasValidRecordGps = record?.gps_fix_valid === true && coords(record)
   return <>
     <div className="monitor-page">
       <div className="monitor-page-heading"><h1 className="page-title">Live monitoring</h1></div>
@@ -183,25 +181,8 @@ export function MonitorPage() {
             <ErrorNotice error={deviceStatus.error} onRetry={deviceStatus.refresh} compact />
             {!deviceStatus.error && <div className="status-list">
               <StatusIndicator label="Camera" value={deviceStatus.data?.camera?.available} loading={deviceStatus.busy} />
-              <StatusIndicator label="GPS" value={deviceStatus.data?.gps?.available} loading={deviceStatus.busy} />
-              <StatusIndicator label="Telemetry" value={deviceStatus.data?.telemetry?.available} loading={deviceStatus.busy} />
             </div>}
-            {hasValidRecordGps && <div className="live-monitor-coordinates"><span>GPS coordinates</span><strong>{record.latitude.toFixed(5)}, {record.longitude.toFixed(5)}</strong></div>}
           </div>
-          <details className="card live-monitor-gps">
-            <summary className="card-title">Optional GPS information</summary>
-            <div className="form-row">
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <input className="field" aria-label="Latitude" placeholder="Latitude" type="number" min="-90" max="90" step="any" value={gps.latitude} onChange={(event) => setGps({ ...gps, latitude: event.target.value })} />
-                <input className="field" aria-label="Longitude" placeholder="Longitude" type="number" min="-180" max="180" step="any" value={gps.longitude} onChange={(event) => setGps({ ...gps, longitude: event.target.value })} />
-              </div>
-              <label className="status-label" style={{ marginTop: 12 }}><input type="checkbox" checked={gps.fixValid} onChange={(event) => setGps({ ...gps, fixValid: event.target.checked })} /> GPS fix is valid</label>
-              <div style={{ display: 'grid', gap: 7, marginTop: 8 }}>
-                <label className="form-help">GPS fix timestamp<input className="field form-input" type="datetime-local" aria-label="GPS fix timestamp" value={gps.gpsTimestamp} onChange={(event) => setGps({ ...gps, gpsTimestamp: event.target.value })} /></label>
-                <label className="form-help">Image capture timestamp<input className="field form-input" type="datetime-local" aria-label="Image capture timestamp" value={gps.capturedAt} onChange={(event) => setGps({ ...gps, capturedAt: event.target.value })} /></label>
-              </div>
-            </div>
-          </details>
           {record && <div className="card analysis-result live-monitor-result">
             <div className="card-heading"><div className="card-title">Latest Result</div></div>
             <div className="result-row"><span>Prediction</span><strong>{record.disease_name || 'Inconclusive'}</strong></div>
