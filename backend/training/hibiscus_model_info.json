@@ -1,0 +1,13 @@
+{
+    "plant": "Hibiscus",
+    "classes": [
+        "Healthy",
+        "Unhealthy"
+    ],
+    "image_size": 224,
+    "architecture": "MobileNetV2",
+    "prototype": true,
+    "training_images": 7,
+    "validation_images": 2,
+    "warning": "Experimental model trained on only 9 images."
+}

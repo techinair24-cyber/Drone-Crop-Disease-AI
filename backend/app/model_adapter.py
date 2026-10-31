@@ -10,6 +10,18 @@ from PIL import Image, UnidentifiedImageError
 
 logger = logging.getLogger(__name__)
 
+SUPPORTED_CROPS = (
+    "Apple",
+    "Bell Pepper",
+    "Cherry",
+    "Corn",
+    "Grape",
+    "Peach",
+    "Potato",
+    "Strawberry",
+    "Tomato",
+)
+
 
 @dataclass(frozen=True)
 class Inference:
@@ -92,7 +104,7 @@ class DiseaseModel:
             "version": None, "message": "No model is configured.",
         }
 
-    def infer(self, image_bytes: bytes) -> Inference:
+    def infer(self, image_bytes: bytes, expected_crop: str | None = None) -> Inference:
         if not self.available:
             raise ModelUnavailableError("Model inference is unavailable. Configure a valid local model first.")
         try:
@@ -106,15 +118,23 @@ class DiseaseModel:
         with torch.inference_mode():
             logits = self.model(**inputs).logits[0]
             probabilities = torch.softmax(logits, dim=-1)
-            scores, indices = torch.topk(probabilities, k=min(3, probabilities.shape[-1]))
-        top_predictions = [
-            {"label": self.labels.get(int(index), f"Class {int(index)}"), "score": float(value)}
+            scores, indices = torch.topk(probabilities, k=probabilities.shape[-1])
+        ranked_labels = [
+            (self.labels.get(int(index), f"Class {int(index)}"), float(value))
             for value, index in zip(scores.tolist(), indices.tolist(), strict=True)
         ]
-        predicted_label = top_predictions[0]["label"]
-        top_score = top_predictions[0]["score"]
+        top_predictions = [
+            {"label": label, "score": value}
+            for label, value in ranked_labels
+            if _crop_from_label(label) in SUPPORTED_CROPS
+        ][:3]
+        predicted_label, top_score = ranked_labels[0]
         crop = _crop_from_label(predicted_label)
-        if top_score < self.score_threshold or crop is None:
+        if (
+            top_score < self.score_threshold
+            or crop not in SUPPORTED_CROPS
+            or (expected_crop is not None and crop != expected_crop)
+        ):
             disease = "Inconclusive"
             classification = "inconclusive"
             crop = None

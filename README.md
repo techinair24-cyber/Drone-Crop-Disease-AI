@@ -115,7 +115,9 @@ To use a different compatible classifier, install compatible CPU or GPU versions
 - `preprocessor_config.json` with the model's actual image preprocessing settings
 - `pytorch_model.bin` or `model.safetensors` with the trained weights
 
-The adapter loads a model once at process startup, uses its processor and labels, returns up to three raw-score predictions, and marks results below the configured threshold inconclusive. Do not point it at an unreviewed or unlicensed model. The deployment platform must have enough memory and disk for the model and its inference framework.
+The bundled checkpoint has 38 labels across 14 crop categories. Inference is limited to nine crops that have both healthy and diseased checkpoint labels: Apple, Bell Pepper, Cherry, Corn, Grape, Peach, Potato, Strawberry, and Tomato. The other five checkpoint crops are excluded because they have only healthy or only diseased labels. An optional crop selection is accepted by `/api/predict`; results whose predicted crop disagrees with that selection are inconclusive. Scores are raw model outputs, and low-confidence results remain inconclusive.
+
+The classifier does not detect leaves or reliably identify non-crop images. In local checks, blank and solid-color images were classified as healthy corn with confidence above 0.91. Do not interpret the crop allowlist or confidence threshold as a non-leaf safeguard. The available real-world evaluation set is small and reports only a 16% end-to-end pass rate, so predictions require human verification. Do not point the adapter at an unreviewed or unlicensed model. The deployment platform must have enough memory and disk for the model and its inference framework.
 
 ## API
 

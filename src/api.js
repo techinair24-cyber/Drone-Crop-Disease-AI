@@ -62,9 +62,10 @@ export const api = {
     } while (page <= pages)
     return items
   },
-  predict: (file) => {
+  predict: (file, cropName = '') => {
     const form = new FormData()
     form.append('file', file)
+    if (cropName) form.append('crop_name', cropName)
     return request('/api/predict', { method: 'POST', body: form })
   },
   imageUrl: (path) => path?.startsWith('http') ? path : `${getApiBase()}${path || ''}`,

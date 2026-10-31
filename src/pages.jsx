@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { api, exportDetections } from './api.js'
 import { getLatestDetection, scheduleMonitorRefresh } from './monitoring.js'
+import { SUPPORTED_CROPS } from './supportedCrops.js'
 
 const ActivityChart = lazy(() => import('./ActivityChart.jsx'))
 const DetectionMap = lazy(() => import('./DetectionMap.jsx'))
@@ -117,6 +118,7 @@ export function OverviewPage() {
 export function MonitorPage() {
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState('')
+  const [selectedCrop, setSelectedCrop] = useState('')
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -145,7 +147,7 @@ export function MonitorPage() {
     if (!file) return
     setBusy(true); setError(null)
     try {
-      const response = await api.predict(file)
+      const response = await api.predict(file, selectedCrop)
       setResult(response)
       sessionStorage.setItem('latestAnalysis', JSON.stringify(response))
     } catch (cause) { setError(cause) } finally { setBusy(false) }
@@ -176,6 +178,10 @@ export function MonitorPage() {
           <div className="camera-actions live-monitor-actions">
             <input className="hidden-input" id="crop-upload" type="file" accept="image/jpeg,image/png" onChange={onFile} />
             <label className="button" htmlFor="crop-upload"><Upload size={14} />Upload image</label>
+            <select className="select" aria-label="Crop type" value={selectedCrop} onChange={(event) => setSelectedCrop(event.target.value)} disabled={busy}>
+              <option value="">Automatic crop</option>
+              {SUPPORTED_CROPS.map((crop) => <option key={crop} value={crop}>{crop}</option>)}
+            </select>
             <button className="button primary" disabled={!file || busy} onClick={analyze}>{busy ? <RefreshCw size={14} className="spin" /> : <Crosshair size={14} />}{busy ? 'Analyzing…' : 'Analyze image'}</button>
           </div>
           {file && <div className="card-subtitle live-monitor-file">{file.name} · {(file.size / (1024 * 1024)).toFixed(2)} MB</div>}
@@ -207,6 +213,7 @@ export function AnalysisPage() {
   })
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState('')
+  const [selectedCrop, setSelectedCrop] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const record = latest?.detection || latest
@@ -227,7 +234,7 @@ export function AnalysisPage() {
     setBusy(true)
     setError(null)
     try {
-      const response = await api.predict(file)
+      const response = await api.predict(file, selectedCrop)
       setLatest(response)
       sessionStorage.setItem('latestAnalysis', JSON.stringify(response))
     } catch (cause) { setError(cause) } finally { setBusy(false) }
@@ -257,6 +264,10 @@ export function AnalysisPage() {
           <div className="camera-actions analysis-actions">
             <input className="hidden-input" id="analysis-upload" type="file" accept="image/jpeg,image/png" onChange={onFile} />
             <label className="button" htmlFor="analysis-upload"><Upload size={14} />Upload image</label>
+            <select className="select" aria-label="Crop type" value={selectedCrop} onChange={(event) => setSelectedCrop(event.target.value)} disabled={busy}>
+              <option value="">Automatic crop</option>
+              {SUPPORTED_CROPS.map((crop) => <option key={crop} value={crop}>{crop}</option>)}
+            </select>
             <button className="button primary" disabled={!file || busy} onClick={analyze}>
               {busy ? <RefreshCw size={14} className="spin" /> : <Crosshair size={14} />}
               {busy ? 'Analyzing…' : 'Analyze image'}
