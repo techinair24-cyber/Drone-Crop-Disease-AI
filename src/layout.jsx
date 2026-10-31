@@ -78,7 +78,7 @@ export function AppShell() {
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <NavLink className="brand" to="/">
           <span className="brand-mark"><Leaf size={22} /></span>
-          <span className="brand-name">TECH IN AIR<span className="brand-sub">DRONE CROP DISEASE AI</span></span>
+          <span className="brand-name">LEAF DISEASE DETECTION</span>
         </NavLink>
         <div className="nav-label">Workspace</div>
         <nav className="nav-list" aria-label="Main navigation">
