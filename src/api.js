@@ -62,10 +62,14 @@ export const api = {
     } while (page <= pages)
     return items
   },
-  predict: (file, cropName = '') => {
+  predict: (file, cropName = '', location = null) => {
     const form = new FormData()
     form.append('file', file)
     if (cropName) form.append('crop_name', cropName)
+    if (location) {
+      form.append('latitude', location.latitude)
+      form.append('longitude', location.longitude)
+    }
     return request('/api/predict', { method: 'POST', body: form })
   },
   imageUrl: (path) => path?.startsWith('http') ? path : `${getApiBase()}${path || ''}`,
@@ -82,9 +86,17 @@ export async function exportDetections(params = {}) {
     page += 1
   } while (page <= totalPages)
   if (!all.length) throw new ApiError('There are no records to export.')
-  const columns = ['id', 'crop_name', 'disease_name', 'classification', 'prediction_score', 'created_at', 'latitude', 'longitude', 'model_name', 'model_version']
+  const columns = ['crop_name', 'disease_name', 'classification', 'prediction_score', 'created_at', 'model_name']
   const escape = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`
-  const csv = [columns.join(','), ...all.map((row) => columns.map((column) => escape(row[column])).join(','))].join('\r\n')
+  const csv = [
+    columns.join(','),
+    ...all.map((row) => columns.map((column) => {
+      const value = column === 'model_name'
+        ? String(row[column] ?? '').replace(/\bprototype\b/ig, '').replace(/\s{2,}/g, ' ').trim()
+        : row[column]
+      return escape(value)
+    }).join(',')),
+  ].join('\r\n')
   const link = document.createElement('a')
   const objectUrl = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
   link.href = objectUrl

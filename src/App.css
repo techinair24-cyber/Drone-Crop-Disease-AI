@@ -836,23 +836,6 @@
   outline-offset: 2px;
 }
 
-.gps-details {
-  margin-top: 12px;
-  border-top: 1px solid var(--border);
-}
-
-.gps-details summary {
-  padding: 12px 0;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.gps-details[open] summary {
-  padding-bottom: 0;
-}
-
 .analysis-result {
   margin-top: 16px;
 }
@@ -912,12 +895,20 @@
   overflow-wrap: anywhere;
 }
 
-.analysis-error {
+.analysis-error,
+.analysis-location-message {
   margin-top: 12px;
-  color: var(--error);
   font-size: 11px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.analysis-error {
+  color: var(--error);
+}
+
+.analysis-location-message {
+  color: var(--text-secondary);
 }
 
 .analysis-prediction {
@@ -1497,7 +1488,7 @@
 .history-list-head,
 .history-record {
   display: grid;
-  grid-template-columns: minmax(200px, 1fr) minmax(84px, 0.42fr) minmax(145px, 0.72fr) minmax(92px, 0.42fr) 76px;
+  grid-template-columns: minmax(200px, 1fr) minmax(84px, 0.42fr) minmax(145px, 0.72fr) 76px;
   align-items: center;
   gap: 12px;
 }
@@ -1573,10 +1564,6 @@
   overflow-wrap: anywhere;
 }
 
-.history-gps {
-  white-space: nowrap;
-}
-
 .history-mobile-label {
   display: none;
 }
@@ -1643,7 +1630,7 @@
 
   .history-list-head,
   .history-record {
-    grid-template-columns: minmax(150px, 1fr) minmax(65px, 0.4fr) minmax(115px, 0.7fr) minmax(70px, 0.4fr) 64px;
+    grid-template-columns: minmax(150px, 1fr) minmax(65px, 0.4fr) minmax(115px, 0.7fr) 64px;
     gap: 8px;
   }
 }
@@ -1712,7 +1699,7 @@
 
   .history-list-head,
   .history-record {
-    grid-template-columns: minmax(150px, 1fr) minmax(65px, 0.4fr) minmax(115px, 0.7fr) minmax(70px, 0.4fr) 64px;
+    grid-template-columns: minmax(150px, 1fr) minmax(65px, 0.4fr) minmax(115px, 0.7fr) 64px;
     gap: 8px;
   }
 

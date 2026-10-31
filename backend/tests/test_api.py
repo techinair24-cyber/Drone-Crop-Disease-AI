@@ -237,12 +237,68 @@ def test_prediction_is_persisted_and_returned_with_location(
     locations = client.get("/api/locations").json()
     assert locations["total"] == 1
     assert locations["items"][0]["id"] == detection["id"]
+    assert locations["items"][0]["latitude"] == 12.4
+    assert locations["items"][0]["longitude"] == 76.2
 
     assert client.get("/api/stats").json()["diseased_images"] == 1
 
     image_response = client.get(detection["image_url"])
     assert image_response.status_code == 200
     assert image_response.headers["content-type"] == "image/png"
+
+
+def test_prediction_saves_coordinate_pair_without_gps_metadata(
+    client, monkeypatch
+):
+    monkeypatch.setattr(main, "model", ReadyModel())
+
+    response = client.post(
+        "/api/predict",
+        files={
+            "file": (
+                "leaf.png",
+                make_image(),
+                "image/png",
+            )
+        },
+        data={
+            "latitude": "12.4",
+            "longitude": "76.2",
+        },
+    )
+
+    assert response.status_code == 201
+    detection = response.json()
+    assert detection["latitude"] == 12.4
+    assert detection["longitude"] == 76.2
+    assert detection["gps_fix_valid"] is None
+
+    locations = client.get("/api/locations").json()
+    assert locations["total"] == 1
+    assert locations["items"][0]["id"] == detection["id"]
+    assert locations["items"][0]["latitude"] == 12.4
+    assert locations["items"][0]["longitude"] == 76.2
+
+
+def test_predict_rejects_out_of_range_coordinates(client, monkeypatch):
+    monkeypatch.setattr(main, "model", ReadyModel())
+
+    response = client.post(
+        "/api/predict",
+        files={
+            "file": (
+                "leaf.png",
+                make_image(),
+                "image/png",
+            )
+        },
+        data={
+            "latitude": "91",
+            "longitude": "76.2",
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_predict_accepts_hibiscus_selection(client, monkeypatch):
@@ -261,7 +317,13 @@ def test_predict_accepts_hibiscus_selection(client, monkeypatch):
     )
 
     assert response.status_code == 201
-    assert response.json()["crop_name"] == "Hibiscus"
+    detection = response.json()
+    assert detection["crop_name"] == "Hibiscus"
+    assert detection["latitude"] is None
+    assert detection["longitude"] is None
+    history = client.get("/api/detections").json()
+    assert history["total"] == 1
+    assert history["items"][0]["id"] == detection["id"]
 
 
 def test_predict_rejects_unsupported_crop_selection(client):

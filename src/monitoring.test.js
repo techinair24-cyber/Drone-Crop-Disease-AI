@@ -36,8 +36,6 @@ test('schedules monitor refresh every 30 seconds', () => {
   assert.equal(timer, 17)
 })
 
-test('exposes no more than ten selectable crop types', () => {
-  assert.equal(SUPPORTED_CROPS.length, 9)
-  assert.equal(SUPPORTED_CROPS.includes('Blueberry'), false)
-  assert.equal(SUPPORTED_CROPS.includes('Tomato'), true)
+test('exposes Hibiscus as the only selectable crop', () => {
+  assert.deepEqual(SUPPORTED_CROPS, ['Hibiscus'])
 })

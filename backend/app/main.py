@@ -317,7 +317,10 @@ async def predict(
         gps_fix_valid = None
         gps_timestamp = None
         captured_at = None
-    else:
+    elif any(
+        value is not None
+        for value in (gps_fix_valid, gps_timestamp, captured_at)
+    ):
         if (
             gps_fix_valid is not True
             or gps_timestamp is None

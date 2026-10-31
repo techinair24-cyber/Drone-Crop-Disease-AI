@@ -6,6 +6,7 @@ import {
   MapPin, RefreshCw, Search, ShieldAlert, Upload,
 } from 'lucide-react'
 import { api, exportDetections } from './api.js'
+import { getCurrentLocation, hasValidCoordinates } from './location.js'
 import { getLatestDetection, scheduleMonitorRefresh } from './monitoring.js'
 import { SUPPORTED_CROPS } from './supportedCrops.js'
 
@@ -13,7 +14,7 @@ const ActivityChart = lazy(() => import('./ActivityChart.jsx'))
 const DetectionMap = lazy(() => import('./DetectionMap.jsx'))
 const formatDate = (value) => value ? new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—'
 const score = (value) => Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '—'
-const coords = (row) => Number.isFinite(row.latitude) && Number.isFinite(row.longitude)
+const displayModelName = (value) => typeof value === 'string' ? value.replace(/\bprototype\b/ig, '').replace(/\s{2,}/g, ' ').trim() : value
 
 function imageValidationError(file) {
   if (!['image/jpeg', 'image/png'].includes(file.type)) return 'Choose a JPG, JPEG, or PNG image.'
@@ -87,7 +88,6 @@ export function OverviewPage() {
   const chart = summary?.activity || []
   const deviceStatuses = [
     ['Camera', getOverviewStatus(status.data?.camera)],
-    ['GPS', getOverviewStatus(status.data?.gps)],
     ['AI Model', getOverviewStatus(status.data?.model)],
     ['Telemetry', getOverviewStatus(status.data?.telemetry)],
   ].filter(([, value]) => value !== null)
@@ -98,7 +98,7 @@ export function OverviewPage() {
         ['Images Analyzed', summary?.total_images ?? '—', FileImage],
         ['Disease Detections', summary?.diseased_images ?? '—', ShieldAlert],
         ['Healthy Images', summary?.healthy_images ?? '—', Leaf],
-        ['GPS-Tagged Detections', summary?.geolocated_images ?? '—', MapPin],
+        ['Inconclusive Images', summary?.inconclusive_images ?? '—', AlertCircle],
       ].map(([label, value, Icon]) => <div className="card metric-card" key={label}><Icon className="metric-icon" size={18} /><div className="metric-label">{label}</div><div className="metric-value">{stats.busy ? <div className="loading-line" style={{ width: 55 }} /> : value}</div></div>)}
     </div>
     <div className="grid overview-panels">
@@ -122,6 +122,7 @@ export function MonitorPage() {
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [locationMessage, setLocationMessage] = useState('')
   const latest = useLoad(() => getLatestDetection(api.detections), [])
   const [failedRemoteImageUrl, setFailedRemoteImageUrl] = useState('')
   const navigate = useNavigate()
@@ -137,6 +138,7 @@ export function MonitorPage() {
     const validationError = imageValidationError(selected)
     if (validationError) { setError(new Error(validationError)); event.target.value = ''; setFile(null); setPreview(''); setResult(null); return }
     setError(null)
+    setLocationMessage('')
     setResult(null)
     if (preview) URL.revokeObjectURL(preview)
     setFile(selected)
@@ -147,7 +149,9 @@ export function MonitorPage() {
     if (!file) return
     setBusy(true); setError(null)
     try {
-      const response = await api.predict(file, selectedCrop)
+      const location = await getCurrentLocation()
+      setLocationMessage(location.message)
+      const response = await api.predict(file, selectedCrop, location.coordinates)
       setResult(response)
       sessionStorage.setItem('latestAnalysis', JSON.stringify(response))
     } catch (cause) { setError(cause) } finally { setBusy(false) }
@@ -185,6 +189,7 @@ export function MonitorPage() {
             <button className="button primary" disabled={!file || busy} onClick={analyze}>{busy ? <RefreshCw size={14} className="spin" /> : <Crosshair size={14} />}{busy ? 'Analyzing…' : 'Analyze image'}</button>
           </div>
           {file && <div className="card-subtitle live-monitor-file">{file.name} · {(file.size / (1024 * 1024)).toFixed(2)} MB</div>}
+          {locationMessage && <div className="analysis-location-message" role="status">{locationMessage}</div>}
           <ErrorNotice error={error} />
         </div>
         <div className="live-monitor-side">
@@ -216,6 +221,7 @@ export function AnalysisPage() {
   const [selectedCrop, setSelectedCrop] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [locationMessage, setLocationMessage] = useState('')
   const record = latest?.detection || latest
   const onFile = (event) => {
     const selected = event.target.files?.[0]
@@ -223,6 +229,7 @@ export function AnalysisPage() {
     const validationError = imageValidationError(selected)
     if (validationError) { setError(new Error(validationError)); event.target.value = ''; setFile(null); setPreview(''); setLatest(null); return }
     setError(null)
+    setLocationMessage('')
     setLatest(null)
     if (preview) URL.revokeObjectURL(preview)
     setFile(selected)
@@ -234,7 +241,9 @@ export function AnalysisPage() {
     setBusy(true)
     setError(null)
     try {
-      const response = await api.predict(file, selectedCrop)
+      const location = await getCurrentLocation()
+      setLocationMessage(location.message)
+      const response = await api.predict(file, selectedCrop, location.coordinates)
       setLatest(response)
       sessionStorage.setItem('latestAnalysis', JSON.stringify(response))
     } catch (cause) { setError(cause) } finally { setBusy(false) }
@@ -274,6 +283,7 @@ export function AnalysisPage() {
             </button>
           </div>
           {file && <div className="card-subtitle analysis-file-name">{file.name} · {(file.size / (1024 * 1024)).toFixed(2)} MB</div>}
+          {locationMessage && <div className="analysis-location-message" role="status">{locationMessage}</div>}
           {error && <div className="analysis-error" role="alert">{error.message || 'Analysis request failed.'}</div>}
         </section>
         <section className="card analysis-result-card" aria-labelledby="analysis-result-heading">
@@ -348,9 +358,7 @@ export function MapPage() {
     setBusy(true)
     setFilters((current) => ({ ...current, [key]: value }))
   }
-  const mapRows = rows.filter((row) => row.gps_fix_valid === true && coords(row)
-    && row.latitude >= -90 && row.latitude <= 90
-    && row.longitude >= -180 && row.longitude <= 180)
+  const mapRows = rows.filter(hasValidCoordinates)
   const center = selected && mapRows.some((row) => row.id === selected.id)
     ? [selected.latitude, selected.longitude]
     : mapRows.length
@@ -369,14 +377,14 @@ export function MapPage() {
         <div className="card disease-map-card"><div className="map-canvas disease-map-canvas">
           {error ? <div className="disease-map-empty">Map unavailable</div> : busy ? <div className="disease-map-empty">Loading map…</div> : mapRows.length
             ? <Suspense fallback={<div className="disease-map-empty">Loading map…</div>}><DetectionMap rows={mapRows} selected={selected} onSelect={setSelected} center={center} /></Suspense>
-            : <div className="disease-map-empty">No GPS-tagged detections</div>}
+            : <div className="disease-map-empty">No detections with location</div>}
         </div></div>
         <div className="card disease-map-list-card">
           <div className="card-heading"><div className="card-title">Mapped detections</div><span className="badge neutral">{busy ? '…' : mapRows.length}</span></div>
           {!busy && !error && mapRows.length ? <div className="map-list">{mapRows.map((row) => <button key={row.id} className={`activity-item disease-map-row${selected?.id === row.id ? ' selected' : ''}`} onClick={() => setSelected(row)}>
             <MapPin size={15} aria-hidden="true" />
             <div className="activity-main"><div className="activity-name">{row.disease_name}</div><div className="activity-meta">{formatDate(row.created_at)}</div></div>
-          </button>)}</div> : <div className="disease-map-empty disease-map-list-empty">{busy ? 'Loading detections…' : error ? 'Detections unavailable' : 'No GPS-tagged detections'}</div>}
+          </button>)}</div> : <div className="disease-map-empty disease-map-list-empty">{busy ? 'Loading detections…' : error ? 'Detections unavailable' : 'No detections with location'}</div>}
         </div>
       </div>
     </div>
@@ -453,11 +461,10 @@ export function HistoryPage() {
         </div>
         {error && <div className="history-message" role="alert"><span>{error.message || 'Unable to load records.'}</span><button className="button" onClick={retry}>Retry</button></div>}
         {!busy && !error && items.length > 0 && <>
-          <div className="history-list-head" aria-hidden="true"><span>Detection</span><span>Confidence</span><span>Date & time</span><span>GPS</span><span /></div>
+          <div className="history-list-head" aria-hidden="true"><span>Detection</span><span>Confidence</span><span>Date & time</span><span /></div>
           <div className="history-record-list">
-            {items.map((row) => {
-              const gpsValid = row.gps_fix_valid === true && coords(row)
-              return <article className="history-record" key={row.id}>
+            {items.map((row) => (
+              <article className="history-record" key={row.id}>
                 <div className="history-detection">
                   {row.image_url
                     ? <img className="history-thumb" src={api.imageUrl(row.image_url)} alt="" />
@@ -469,10 +476,9 @@ export function HistoryPage() {
                 </div>
                 <div className="history-field"><span className="history-mobile-label">Confidence</span>{score(row.prediction_score)}</div>
                 <div className="history-field"><span className="history-mobile-label">Date & time</span>{formatDate(row.created_at)}</div>
-                <div className="history-field history-gps"><span className="history-mobile-label">GPS</span><span className={`badge ${gpsValid ? '' : 'neutral'}`}>{gpsValid ? 'GPS tagged' : 'No GPS'}</span></div>
                 <div className="history-actions"><button className="button" onClick={() => openDetail(row)}>Details</button></div>
               </article>
-            })}
+            ))}
           </div>
         </>}
         {!busy && !error && !items.length && <div className="history-empty">No matching records</div>}
@@ -485,7 +491,7 @@ export function HistoryPage() {
           </div>
         </div>
       </section>
-      {detail && <div className="modal-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) closeDetail() }}><section className="modal" role="dialog" aria-modal="true" aria-label="Detection details"><div className="modal-header"><div><div className="card-title">Detection details</div><div className="card-subtitle">{detail.id}</div></div><button className="button" onClick={closeDetail}>Close</button></div>{detail.image_url && <img src={api.imageUrl(detail.image_url)} alt="Detected crop" style={{ maxWidth: '100%', maxHeight: 250, display: 'block', marginBottom: 14, borderRadius: 8 }} />}{[['Crop', detail.crop_name], ['Disease', detail.disease_name], ['Classification', detail.classification], ['Model score', score(detail.prediction_score)], ['Date', formatDate(detail.created_at)], ['Location', coords(detail) ? `${detail.latitude}, ${detail.longitude}` : 'Location unavailable'], ['Model', detail.model_name], ['Version', detail.model_version]].map(([label, value]) => <div className="result-row" key={label}><span>{label}</span><strong>{value || '—'}</strong></div>)}</section></div>}
+      {detail && <div className="modal-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) closeDetail() }}><section className="modal" role="dialog" aria-modal="true" aria-label="Detection details"><div className="modal-header"><div><div className="card-title">Detection details</div></div><button className="button" onClick={closeDetail}>Close</button></div>{detail.image_url && <img src={api.imageUrl(detail.image_url)} alt="Detected crop" style={{ maxWidth: '100%', maxHeight: 250, display: 'block', marginBottom: 14, borderRadius: 8 }} />}{[['Crop', detail.crop_name], ['Disease', detail.disease_name], ['Classification', detail.classification], ['Model score', score(detail.prediction_score)], ['Date', formatDate(detail.created_at)], ['Model name', displayModelName(detail.model_name)]].map(([label, value]) => <div className="result-row" key={label}><span>{label}</span><strong>{value || '—'}</strong></div>)}</section></div>}
     </div>
   </>
 }
