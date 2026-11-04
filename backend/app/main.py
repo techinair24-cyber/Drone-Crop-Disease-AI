@@ -46,7 +46,7 @@ model = HibiscusModel(hibiscus_model_path)
 crop_model_path = (
     Path(__file__).resolve().parents[1]
     / "models"
-    / "crop_classifier_best.keras"
+    / "crop_classifier.tflite"
 )
 crop_model = CropModel(crop_model_path)
 
