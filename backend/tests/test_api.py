@@ -158,6 +158,25 @@ def test_empty_history_and_stats(client):
     assert len(stats["activity"]) == 14
 
 
+def test_empty_recommendations_return_successful_empty_page(client):
+    response = client.get("/api/recommendations")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [],
+        "page": 1,
+        "page_size": 100,
+        "total": 0,
+        "pages": 0,
+        "summary": {
+            "total_unhealthy": 0,
+            "pending": 0,
+            "reviewed": 0,
+            "crop_counts": {},
+        },
+    }
+
+
 def test_existing_history_schema_migrates_without_losing_records(tmp_path):
     database_path = tmp_path / "legacy.sqlite3"
     with sqlite3.connect(database_path) as connection:
