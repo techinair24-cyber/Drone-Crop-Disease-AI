@@ -9,6 +9,7 @@ import { api, exportDetections } from './api.js'
 import { getCurrentLocation, hasValidCoordinates } from './location.js'
 import { getLatestDetection, scheduleMonitorRefresh } from './monitoring.js'
 import { SUPPORTED_CROPS } from './supportedCrops.js'
+import { predictCrop } from './cropPrediction.js'
 
 const ActivityChart = lazy(() => import('./ActivityChart.jsx'))
 const DetectionMap = lazy(() => import('./DetectionMap.jsx'))
@@ -20,19 +21,6 @@ function imageValidationError(file) {
   if (!['image/jpeg', 'image/png'].includes(file.type)) return 'Choose a JPG, JPEG, or PNG image.'
   if (file.size > 10 * 1024 * 1024) return 'Image exceeds the 10 MB upload limit.'
   return null
-}
-
-async function predictCrop(file, selectedCrop, location) {
-  if (selectedCrop) return api.predict(file, selectedCrop, location)
-
-  const cropResult = await api.cropPredict(file)
-  if (!SUPPORTED_CROPS.includes(cropResult.crop_name)) {
-    throw new Error('Automatic crop detection returned an unsupported crop.')
-  }
-  if (cropResult.crop_name !== 'Hibiscus') {
-    return { ...cropResult, crop_only: true }
-  }
-  return api.predict(file, cropResult.crop_name, location)
 }
 
 function ErrorNotice({ error, onRetry, compact = false }) {
@@ -164,7 +152,7 @@ export function MonitorPage() {
     try {
       const location = await getCurrentLocation()
       setLocationMessage(location.message)
-      const response = await predictCrop(file, selectedCrop, location.coordinates)
+      const response = await predictCrop(api, file, selectedCrop, location.coordinates)
       setResult(response)
       sessionStorage.setItem('latestAnalysis', JSON.stringify(response))
     } catch (cause) { setError(cause) } finally { setBusy(false) }
@@ -217,11 +205,15 @@ export function MonitorPage() {
             <div className="card-heading"><div className="card-title">Latest Result</div></div>
             {record.crop_only
               ? <>
-                <div className="result-row"><span>Identified crop</span><strong>{record.crop_name}</strong></div>
+                <div className="result-row"><span>{record.crop_mismatch ? 'Detected crop' : 'Identified crop'}</span><strong>{record.crop_name}</strong></div>
                 <div className="result-row"><span>Crop confidence</span><strong>{score(record.prediction_score)}</strong></div>
-                <p role="status">Disease and health classification is currently available only for Hibiscus. No disease prediction was made.</p>
+                {record.crop_mismatch
+                  ? <p role="status">You selected {record.selected_crop}, but the image was identified as {record.crop_name}. No disease prediction was made.</p>
+                  : <p role="status">Disease and health classification is currently available only for Hibiscus. No disease prediction was made.</p>}
               </>
               : <>
+                <div className="result-row"><span>Identified crop</span><strong>{record.crop_name}</strong></div>
+                {Number.isFinite(record.crop_confidence) && <div className="result-row"><span>Crop confidence</span><strong>{score(record.crop_confidence)}</strong></div>}
                 <div className="result-row"><span>Prediction</span><strong>{record.disease_name || 'Inconclusive'}</strong></div>
                 <div className="result-row"><span>Score</span><strong>{score(record.prediction_score)}</strong></div>
               </>}
@@ -264,7 +256,7 @@ export function AnalysisPage() {
     try {
       const location = await getCurrentLocation()
       setLocationMessage(location.message)
-      const response = await predictCrop(file, selectedCrop, location.coordinates)
+      const response = await predictCrop(api, file, selectedCrop, location.coordinates)
       setLatest(response)
       sessionStorage.setItem('latestAnalysis', JSON.stringify(response))
     } catch (cause) { setError(cause) } finally { setBusy(false) }
@@ -317,17 +309,29 @@ export function AnalysisPage() {
                 {record.crop_only
                   ? <>
                     <div className="analysis-prediction">
+                      <span>{record.crop_mismatch ? 'Detected crop' : 'Identified crop'}</span>
+                      <strong>{record.crop_name}</strong>
+                    </div>
+                    {record.crop_mismatch
+                      ? <p role="status">You selected {record.selected_crop}, but the image was identified as {record.crop_name}. No disease prediction was made.</p>
+                      : <p role="status">Crop identification only. Disease and health classification is currently available only for Hibiscus; no disease prediction was made.</p>}
+                  </>
+                  : <>
+                    <div className="analysis-prediction">
                       <span>Identified crop</span>
                       <strong>{record.crop_name}</strong>
                     </div>
-                    <p role="status">Crop identification only. Disease and health classification is currently available only for Hibiscus; no disease prediction was made.</p>
-                  </>
-                  : <div className="analysis-prediction">
-                    <span>Predicted disease class</span>
-                    <strong>{record.disease_name}</strong>
-                  </div>}
+                    {Number.isFinite(record.crop_confidence) && <div className="analysis-confidence">
+                      <span>Crop confidence</span>
+                      <strong>{score(record.crop_confidence)}</strong>
+                    </div>}
+                    <div className="analysis-prediction">
+                      <span>Predicted disease class</span>
+                      <strong>{record.disease_name}</strong>
+                    </div>
+                  </>}
                 {Number.isFinite(record.prediction_score) && <div className="analysis-confidence">
-                  <span>{record.crop_only ? 'Crop identification confidence' : 'Confidence'}</span>
+                  <span>{record.crop_only ? 'Crop identification confidence' : 'Disease classification confidence'}</span>
                   <strong>{score(record.prediction_score)}</strong>
                 </div>}
                 {record.top_predictions?.length > 1 && <div className="analysis-alternatives">
