@@ -1645,6 +1645,16 @@
   font-size: 11px;
 }
 
+.gemini-analysis-result h4 {
+  margin: 12px 0 6px;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.gemini-analysis-result > h4:first-of-type {
+  margin-top: 0;
+}
+
 .recommendation-solution-section p,
 .recommendation-solution-section ul {
   margin: 0;

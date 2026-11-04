@@ -29,6 +29,8 @@ class Settings:
     gps_max_skew_seconds: int
     cors_origins: list[str]
     model_name: str
+    gemini_api_key: str | None
+    gemini_model: str
 
 
 def get_settings() -> Settings:
@@ -41,4 +43,6 @@ def get_settings() -> Settings:
         gps_max_skew_seconds=int(os.getenv("GPS_MAX_SKEW_SECONDS", "30")),
         cors_origins=_cors_origins(),
         model_name=os.getenv("MODEL_NAME", "Local image classifier"),
+        gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
+        gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
     )

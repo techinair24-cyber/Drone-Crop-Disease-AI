@@ -29,6 +29,9 @@ class DetectionStore:
                     message TEXT,
                     recommendation_reviewed INTEGER NOT NULL DEFAULT 0,
                     source TEXT,
+                    gemini_analysis TEXT,
+                    gemini_status TEXT,
+                    gemini_error TEXT,
                     disease_name TEXT NOT NULL,
                     classification TEXT NOT NULL,
                     prediction_score REAL,
@@ -53,6 +56,9 @@ class DetectionStore:
                 ("message", "TEXT"),
                 ("recommendation_reviewed", "INTEGER NOT NULL DEFAULT 0"),
                 ("source", "TEXT"),
+                ("gemini_analysis", "TEXT"),
+                ("gemini_status", "TEXT"),
+                ("gemini_error", "TEXT"),
                 ("gps_fix_valid", "INTEGER"),
                 ("gps_timestamp", "TEXT"),
                 ("captured_at", "TEXT"),
@@ -82,6 +88,13 @@ class DetectionStore:
                 record.get("recommendation_reviewed", False)
             ),
             "source": record.get("source"),
+            "gemini_status": record.get(
+                "gemini_status",
+                "pending" if record.get("health_status") == "Unhealthy"
+                else "not_applicable",
+            ),
+            "gemini_analysis": record.get("gemini_analysis"),
+            "gemini_error": record.get("gemini_error"),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         with self._connect() as connection:
@@ -89,16 +102,23 @@ class DetectionStore:
                 """INSERT INTO detections
                 (id, filename, crop_name, crop_confidence, health_status, health_confidence,
                  health_probabilities, message, recommendation_reviewed, disease_name,
-                 source, classification, prediction_score,
+                 source, gemini_analysis, gemini_status, gemini_error,
+                 classification, prediction_score,
                  created_at, latitude, longitude, gps_fix_valid, gps_timestamp, captured_at,
                  model_name, model_version, top_predictions)
                 VALUES (:id, :filename, :crop_name, :crop_confidence, :health_status, :health_confidence,
                  :health_probabilities, :message, :recommendation_reviewed, :disease_name,
-                 :source, :classification, :prediction_score,
+                 :source, :gemini_analysis, :gemini_status, :gemini_error,
+                 :classification, :prediction_score,
                  :created_at, :latitude, :longitude, :gps_fix_valid, :gps_timestamp, :captured_at,
                  :model_name, :model_version, :top_predictions)""",
                 {
                     **stored,
+                    "gemini_analysis": (
+                        json.dumps(record["gemini_analysis"])
+                        if record.get("gemini_analysis") is not None
+                        else None
+                    ),
                     "health_probabilities": (
                         json.dumps(record["health_probabilities"])
                         if record.get("health_probabilities") is not None
@@ -108,6 +128,51 @@ class DetectionStore:
                 },
             )
         return self._serialize(stored)
+
+    def claim_gemini_analysis(self, detection_id: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE detections
+                SET gemini_status = 'running', gemini_error = NULL
+                WHERE id = ?
+                  AND health_status = 'Unhealthy'
+                  AND (
+                    gemini_status IS NULL
+                    OR gemini_status IN ('pending', 'failed', 'not_configured')
+                  )
+                """,
+                (detection_id,),
+            )
+        return cursor.rowcount == 1
+
+    def save_gemini_analysis(
+        self,
+        detection_id: str,
+        status: str,
+        analysis: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE detections
+                SET gemini_analysis = ?, gemini_status = ?, gemini_error = ?
+                WHERE id = ? AND health_status = 'Unhealthy'
+                """,
+                (
+                    json.dumps(analysis) if analysis is not None else None,
+                    status,
+                    error,
+                    detection_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = connection.execute(
+                "SELECT * FROM detections WHERE id = ?", (detection_id,)
+            ).fetchone()
+        return self._serialize(dict(row)) if row else None
 
     def list_recommendations(
         self, page: int = 1, page_size: int = 100
@@ -282,6 +347,15 @@ class DetectionStore:
         health_probabilities = row.get("health_probabilities")
         if isinstance(health_probabilities, str):
             health_probabilities = json.loads(health_probabilities)
+        gemini_analysis = row.get("gemini_analysis")
+        if isinstance(gemini_analysis, str):
+            gemini_analysis = json.loads(gemini_analysis)
+        gemini_status = row.get("gemini_status")
+        if gemini_status is None:
+            gemini_status = (
+                "pending" if row.get("health_status") == "Unhealthy"
+                else "not_applicable"
+            )
         return {
             "id": row["id"],
             "image_url": f"/api/images/{row['filename']}",
@@ -295,6 +369,9 @@ class DetectionStore:
                 row.get("recommendation_reviewed", False)
             ),
             "source": row.get("source"),
+            "gemini_analysis": gemini_analysis,
+            "gemini_status": gemini_status,
+            "gemini_error": row.get("gemini_error"),
             "disease_name": row["disease_name"],
             "classification": row["classification"],
             "prediction_score": row["prediction_score"],

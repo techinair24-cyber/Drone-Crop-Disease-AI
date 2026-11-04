@@ -59,6 +59,10 @@ export const api = {
     `/api/detections/${encodeURIComponent(id)}/recommendation-review`,
     { method: 'POST' },
   ),
+  retryGeminiAnalysis: (id) => request(
+    `/api/detections/${encodeURIComponent(id)}/gemini-analysis/retry`,
+    { method: 'POST' },
+  ),
   recommendations: (params = {}) => {
     const query = new URLSearchParams()
     Object.entries(params).forEach(([key, value]) => {

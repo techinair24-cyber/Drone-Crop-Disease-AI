@@ -548,6 +548,8 @@ export function RecommendationsPage() {
   const [cropFilter, setCropFilter] = useState('')
   const [reviewBusyId, setReviewBusyId] = useState('')
   const [reviewError, setReviewError] = useState(null)
+  const [geminiBusyId, setGeminiBusyId] = useState('')
+  const [geminiError, setGeminiError] = useState(null)
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedId = searchParams.get('detection')
   const records = (detections.data?.items || []).filter((record) => (
@@ -580,6 +582,18 @@ export function RecommendationsPage() {
     }
   }
   const recommendationsFor = (record) => getCropRecommendation(record.crop_name)
+  const retryGemini = async (record) => {
+    setGeminiError(null)
+    setGeminiBusyId(record.id)
+    try {
+      await api.retryGeminiAnalysis(record.id)
+      await detections.refresh()
+    } catch (cause) {
+      setGeminiError(cause)
+    } finally {
+      setGeminiBusyId('')
+    }
+  }
 
   return <>
     <div className="recommendations-page">
@@ -592,6 +606,7 @@ export function RecommendationsPage() {
       </div>
       {detections.error && <ErrorNotice error={detections.error} onRetry={detections.refresh} />}
       {reviewError && <ErrorNotice error={reviewError} />}
+      {geminiError && <ErrorNotice error={geminiError} />}
       {!detections.error && <div className="recommendations-summary">
         <article className="card recommendations-metric"><span>Total unhealthy detections</span><strong>{detections.busy && !detections.data ? '…' : summary?.total_unhealthy ?? 0}</strong></article>
         <article className="card recommendations-metric"><span>Pending recommendations</span><strong>{detections.busy && !detections.data ? '…' : summary?.pending ?? 0}</strong></article>
@@ -620,6 +635,7 @@ export function RecommendationsPage() {
           : filteredRecords.length
             ? <div className="recommendations-grid">{filteredRecords.map((record) => {
               const guidance = recommendationsFor(record)
+              const status = getDetectionHealthStatus(record)
               return <article className="card recommendation-detection-card" key={record.id}>
                 <div className="recommendation-card-image">
                   {record.image_url
@@ -635,6 +651,17 @@ export function RecommendationsPage() {
                   </div>
                   <div className="recommendation-card-date">{formatDate(record.created_at)}</div>
                   <div className="recommendation-card-source">Source: {record.source === 'live_monitoring' ? 'Live Monitoring' : 'AI Analysis'}</div>
+                  <div className="recommendation-card-source">Gemini image analysis: {record.gemini_status === 'completed'
+                    ? record.gemini_analysis?.assessment === 'likely_disease'
+                      ? `Likely ${record.gemini_analysis.likely_disease}`
+                      : record.gemini_analysis?.assessment === 'inconclusive'
+                        ? 'Inconclusive'
+                        : 'Possible causes identified'
+                    : record.gemini_status === 'not_configured'
+                      ? 'Not configured'
+                      : record.gemini_status === 'running'
+                        ? 'Analysis in progress'
+                        : 'Retry available'}</div>
                   <p className="recommendation-card-overview">{guidance?.overview}</p>
                   <div className="recommendation-immediate"><strong>First action</strong><span>{guidance.immediateAction}</span></div>
                   <div className="recommendation-card-actions">
@@ -657,7 +684,37 @@ export function RecommendationsPage() {
             <button className="button" onClick={closeSolution}>Close</button>
           </div>
           {selected.image_url && <img className="recommendation-solution-image" src={api.imageUrl(selected.image_url)} alt={`${selected.crop_name} leaf from detection`} />}
-          <div className="recommendation-model-limit" role="note">The AI classifies leaf health as Healthy or Unhealthy only; it does not identify a disease. The possible causes below are not diagnoses. Inspect the crop and consult a qualified local adviser before disease-specific treatment.</div>
+          <div className="recommendation-model-limit" role="note">The crop and health models are unchanged. Gemini analyzes this saved leaf image and provides a tentative assessment, not a confirmed diagnosis. Inspect the crop and consult a qualified local adviser before disease-specific treatment. No pesticide products or dosages are prescribed.</div>
+          <section className="recommendation-solution-section gemini-analysis-result" aria-label="Gemini image disease assessment">
+            <h3>Gemini image assessment</h3>
+            {selected.gemini_status === 'completed' && selected.gemini_analysis
+              ? <>
+                <h4>{selected.gemini_analysis.assessment === 'inconclusive'
+                  ? 'Inconclusive — image is not sufficient for a diagnosis'
+                  : selected.gemini_analysis.assessment === 'likely_disease'
+                    ? `Likely disease: ${selected.gemini_analysis.likely_disease}`
+                    : 'Possible causes (not a diagnosis)'}</h4>
+                <p>{selected.gemini_analysis.explanation}</p>
+                {[
+                  ['Possible causes', selected.gemini_analysis.possible_causes],
+                  ['Visible symptoms', selected.gemini_analysis.visible_symptoms],
+                  ['Immediate actions', selected.gemini_analysis.immediate_actions],
+                  ['Treatment and management', selected.gemini_analysis.treatment_management],
+                  ['Organic options', selected.gemini_analysis.organic_options],
+                  ['Prevention', selected.gemini_analysis.prevention],
+                  ['Follow-up monitoring', selected.gemini_analysis.follow_up],
+                ].map(([title, items]) => <div key={title}><h4>{title}</h4>{items?.length ? <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul> : <p>No image-based guidance returned.</p>}</div>)}
+                <h4>When to consult an agricultural expert</h4>
+                <p>{selected.gemini_analysis.expert_guidance}</p>
+              </>
+              : <>
+                <p>{selected.gemini_error || (selected.gemini_status === 'running' ? 'Gemini analysis is in progress.' : 'No Gemini image assessment is saved for this detection yet.')}</p>
+                <button className="button primary" onClick={() => retryGemini(selected)} disabled={geminiBusyId === selected.id || selected.gemini_status === 'running'}>
+                  {geminiBusyId === selected.id ? 'Analyzing image…' : 'Retry Gemini analysis'}
+                </button>
+              </>}
+          </section>
+          <h3 className="card-title">Additional crop-specific guidance</h3>
           <div className="recommendation-solution-sections">
             {[
               ['Overview', 'overview'],

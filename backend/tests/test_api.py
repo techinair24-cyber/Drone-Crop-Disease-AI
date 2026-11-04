@@ -9,6 +9,7 @@ from PIL import Image
 
 from backend.app import main
 from backend.app.crop_adapter import SUPPORTED_CROPS
+from backend.app.gemini import GeminiAnalysisError
 from backend.app.storage import DetectionStore
 
 
@@ -576,6 +577,101 @@ def test_recommendations_only_include_real_sourced_unhealthy_images(
     summary = client.get("/api/recommendations").json()["summary"]
     assert summary["pending"] == 1
     assert summary["reviewed"] == 1
+
+
+def test_healthy_prediction_skips_gemini(client, monkeypatch):
+    install_ready_models(
+        monkeypatch, crop_name="Apple", health_status="Healthy"
+    )
+    calls = []
+
+    async def analyze(*args):
+        calls.append(args)
+        raise AssertionError("Healthy detections must not call Gemini.")
+
+    monkeypatch.setattr(main, "analyze_leaf_image", analyze)
+    response = client.post(
+        "/api/predict",
+        files={"file": ("apple.png", make_image(), "image/png")},
+        data={"source": "analysis"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["gemini_status"] == "not_applicable"
+    assert response.json()["gemini_analysis"] is None
+    assert calls == []
+
+
+def test_unhealthy_prediction_saves_image_based_gemini_analysis_and_retries(
+    client, monkeypatch
+):
+    install_ready_models(monkeypatch, crop_name="Apple")
+    monkeypatch.setattr(
+        main,
+        "settings",
+        replace(main.settings, gemini_api_key="test-key"),
+    )
+    image_bytes = make_image("PNG", "brown")
+    calls = []
+    analysis = {
+        "assessment": "possible_causes",
+        "likely_disease": None,
+        "possible_causes": ["Leaf spot-like damage", "Environmental stress"],
+        "explanation": "The image shows localized discoloration, but is not conclusive.",
+        "visible_symptoms": ["Brown areas on the leaf surface"],
+        "immediate_actions": ["Inspect nearby leaves and isolate affected material."],
+        "treatment_management": ["Confirm symptoms before selecting a treatment."],
+        "organic_options": ["Remove fallen plant debris where practical."],
+        "prevention": ["Avoid prolonged leaf wetness."],
+        "follow_up": ["Recheck new growth over the next week."],
+        "expert_guidance": "Consult a local agricultural extension expert if symptoms spread.",
+    }
+
+    async def analyze(actual_image, crop_name, mime_type, api_key, model_name):
+        calls.append((actual_image, crop_name, mime_type, api_key, model_name))
+        if len(calls) == 1:
+            raise GeminiAnalysisError("Gemini analysis timed out. You can retry.")
+        return analysis
+
+    monkeypatch.setattr(main, "analyze_leaf_image", analyze)
+    prediction = client.post(
+        "/api/predict",
+        files={"file": ("apple.png", image_bytes, "image/png")},
+        data={"source": "live_monitoring"},
+    )
+
+    assert prediction.status_code == 201
+    detection = prediction.json()
+    assert detection["health_status"] == "Unhealthy"
+    assert detection["gemini_status"] == "failed"
+    assert detection["gemini_error"] == "Gemini analysis timed out. You can retry."
+    detection_id = detection["id"]
+
+    recommendations = client.get("/api/recommendations").json()
+    assert recommendations["items"][0]["gemini_status"] == "failed"
+
+    retried = client.post(
+        f"/api/detections/{detection_id}/gemini-analysis/retry"
+    )
+    assert retried.status_code == 200
+    assert retried.json()["gemini_status"] == "completed"
+    assert retried.json()["gemini_analysis"] == analysis
+    assert len(calls) == 2
+    assert calls[0] == (
+        image_bytes,
+        "Apple",
+        "image/png",
+        "test-key",
+        main.settings.gemini_model,
+    )
+
+    client.get("/api/recommendations")
+    cached = client.post(
+        f"/api/detections/{detection_id}/gemini-analysis/retry"
+    )
+    assert cached.status_code == 200
+    assert cached.json()["gemini_analysis"] == analysis
+    assert len(calls) == 2
 
 
 def test_predict_rejects_unknown_detection_source(client, monkeypatch):

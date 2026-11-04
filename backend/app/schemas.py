@@ -9,6 +9,20 @@ class PredictionItem(BaseModel):
     score: float = Field(ge=0, le=1)
 
 
+class GeminiDiseaseAnalysis(BaseModel):
+    assessment: Literal["likely_disease", "possible_causes", "inconclusive"]
+    likely_disease: str | None = None
+    possible_causes: list[str] = Field(default_factory=list)
+    explanation: str
+    visible_symptoms: list[str] = Field(default_factory=list)
+    immediate_actions: list[str] = Field(default_factory=list)
+    treatment_management: list[str] = Field(default_factory=list)
+    organic_options: list[str] = Field(default_factory=list)
+    prevention: list[str] = Field(default_factory=list)
+    follow_up: list[str] = Field(default_factory=list)
+    expert_guidance: str
+
+
 class Detection(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -22,6 +36,16 @@ class Detection(BaseModel):
     message: str | None = None
     recommendation_reviewed: bool = False
     source: Literal["analysis", "live_monitoring"] | None = None
+    gemini_analysis: GeminiDiseaseAnalysis | None = None
+    gemini_status: Literal[
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "not_configured",
+        "not_applicable",
+    ] | None = None
+    gemini_error: str | None = None
     disease_name: str
     classification: Literal["healthy", "diseased", "inconclusive"]
     prediction_score: float | None = Field(default=None, ge=0, le=1)

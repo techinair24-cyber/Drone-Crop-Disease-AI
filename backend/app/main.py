@@ -17,6 +17,7 @@ from PIL import Image, UnidentifiedImageError
 
 from .config import get_settings
 from .crop_adapter import CropModel, SUPPORTED_CROPS
+from .gemini import GeminiAnalysisError, analyze_leaf_image
 from .health_adapter import HealthModel
 from .schemas import (
     Detection,
@@ -269,6 +270,97 @@ def mark_recommendation_reviewed(detection_id: str) -> dict:
     return updated
 
 
+async def _run_gemini_analysis(detection_id: str) -> dict:
+    detection = store.get(detection_id)
+    if detection is None:
+        raise HTTPException(status_code=404, detail="Detection record not found.")
+    if detection["health_status"] != "Unhealthy":
+        raise HTTPException(
+            status_code=422,
+            detail="Gemini analysis is available only for unhealthy detections.",
+        )
+    if detection["source"] not in {"analysis", "live_monitoring"}:
+        raise HTTPException(
+            status_code=422,
+            detail="Gemini analysis requires a verified user detection.",
+        )
+    filename = Path(detection["image_url"]).name
+    if not store.has_saved_image(filename):
+        raise HTTPException(
+            status_code=422,
+            detail="The saved detection image is unavailable for analysis.",
+        )
+    if detection["gemini_status"] == "completed":
+        return detection
+    if detection["gemini_status"] == "running":
+        raise HTTPException(
+            status_code=409,
+            detail="Gemini analysis is already running for this detection.",
+        )
+    if not store.claim_gemini_analysis(detection_id):
+        latest = store.get(detection_id)
+        if latest and latest["gemini_status"] == "completed":
+            return latest
+        if latest and latest["gemini_status"] == "running":
+            raise HTTPException(
+                status_code=409,
+                detail="Gemini analysis is already running for this detection.",
+            )
+        raise HTTPException(
+            status_code=409,
+            detail="Gemini analysis could not be started. Refresh and retry.",
+        )
+
+    image_path = settings.uploads_path / filename
+    mime_type = "image/jpeg" if image_path.suffix.lower() in {".jpg", ".jpeg"} else "image/png"
+    try:
+        analysis = await analyze_leaf_image(
+            image_path.read_bytes(),
+            detection["crop_name"],
+            mime_type,
+            settings.gemini_api_key,
+            settings.gemini_model,
+        )
+    except GeminiAnalysisError as exc:
+        logger.warning(
+            "Gemini analysis failed detection=%s status=%s",
+            detection_id,
+            exc.status,
+        )
+        updated = store.save_gemini_analysis(
+            detection_id,
+            exc.status,
+            error=str(exc),
+        )
+    except Exception:
+        logger.exception("Unexpected Gemini analysis failure detection=%s", detection_id)
+        updated = store.save_gemini_analysis(
+            detection_id,
+            "failed",
+            error="Gemini analysis failed unexpectedly. You can retry.",
+        )
+    else:
+        updated = store.save_gemini_analysis(
+            detection_id,
+            "completed",
+            analysis=analysis,
+        )
+    if updated is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Gemini analysis could not be saved.",
+        )
+    return updated
+
+
+@app.post(
+    "/api/detections/{detection_id}/gemini-analysis/retry",
+    response_model=Detection,
+)
+async def retry_gemini_analysis(detection_id: str) -> dict:
+    return await _run_gemini_analysis(detection_id)
+
+
 @app.get("/api/locations", response_model=DetectionPage)
 def list_locations(
     page: Annotated[int, Query(ge=1)] = 1,
@@ -513,6 +605,9 @@ async def predict(
         record["id"],
         record["classification"],
     )
+
+    if record["health_status"] == "Unhealthy":
+        record = await _run_gemini_analysis(record["id"])
 
     return record
 
