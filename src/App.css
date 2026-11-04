@@ -1605,8 +1605,7 @@
   object-fit: contain;
 }
 
-.recommendation-healthy-note,
-.recommendation-model-limit {
+.recommendation-healthy-note {
   margin: 14px 0;
   padding: 12px;
   border-radius: 8px;
@@ -1618,12 +1617,6 @@
   border: 1px solid color-mix(in srgb, var(--success) 25%, var(--border));
   background: var(--success-soft);
   color: var(--success);
-}
-
-.recommendation-model-limit {
-  border: 1px solid color-mix(in srgb, var(--warning) 25%, var(--border));
-  background: var(--warning-soft);
-  color: var(--warning);
 }
 
 .recommendation-solution-sections {

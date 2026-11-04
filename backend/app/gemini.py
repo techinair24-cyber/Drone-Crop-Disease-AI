@@ -1,4 +1,5 @@
 import base64
+import asyncio
 import json
 import logging
 import re
@@ -11,6 +12,8 @@ logger = logging.getLogger(__name__)
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta"
 FALLBACK_MODEL_ID = "gemini-3.8-flash"
 MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+RETRYABLE_HTTP_STATUSES = {429, 503}
+RETRY_DELAYS_SECONDS = (1, 2)
 
 
 class GeminiAnalysisError(Exception):
@@ -238,30 +241,54 @@ async def _generate_content(
         mime_type,
         len(image_bytes),
     )
-    try:
-        response = await client.post(
-            f"{API_ROOT}/models/{model_id}:generateContent",
-            headers={"x-goog-api-key": api_key},
-            json={
-                "contents": [{
-                    "role": "user",
-                    "parts": [
-                        {"text": _prompt(crop_name)},
-                        {
-                            "inline_data": {
-                                "mime_type": mime_type,
-                                "data": base64.b64encode(image_bytes).decode("ascii"),
-                            }
-                        },
-                    ],
-                }],
-                "generationConfig": {
-                    "responseMimeType": "application/json",
-                    "temperature": 0.2,
-                    "maxOutputTokens": 2048,
+    payload = {
+        "contents": [{
+            "role": "user",
+            "parts": [
+                {"text": _prompt(crop_name)},
+                {
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": base64.b64encode(image_bytes).decode("ascii"),
+                    }
                 },
-            },
-        )
+            ],
+        }],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "temperature": 0.2,
+            "maxOutputTokens": 2048,
+        },
+    }
+
+    try:
+        for attempt in range(len(RETRY_DELAYS_SECONDS) + 1):
+            response = await client.post(
+                f"{API_ROOT}/models/{model_id}:generateContent",
+                headers={"x-goog-api-key": api_key},
+                json=payload,
+            )
+            if (
+                response.status_code not in RETRYABLE_HTTP_STATUSES
+                or attempt == len(RETRY_DELAYS_SECONDS)
+            ):
+                break
+
+            google_status, google_message = _google_error(response, api_key)
+            delay = RETRY_DELAYS_SECONDS[attempt]
+            logger.warning(
+                "Gemini temporary response; retrying detection_id=%s "
+                "http_status=%s model=%s google_status=%s google_message=%s "
+                "retry=%s delay_seconds=%s",
+                detection_id,
+                response.status_code,
+                model_id,
+                google_status or "unspecified",
+                google_message,
+                attempt + 1,
+                delay,
+            )
+            await asyncio.sleep(delay)
     except httpx.TimeoutException as exc:
         logger.warning(
             "Gemini request failed detection_id=%s http_status=timeout model=%s "
@@ -298,8 +325,15 @@ async def _generate_content(
             google_message,
         )
         raise GeminiAnalysisError(
-            f"Gemini analysis failed (HTTP {response.status_code}): "
-            f"{google_message} You can retry.",
+            (
+                "Gemini is temporarily unavailable due to high demand. "
+                "Please retry shortly."
+                if response.status_code in RETRYABLE_HTTP_STATUSES
+                else (
+                    f"Gemini analysis failed (HTTP {response.status_code}): "
+                    f"{google_message} You can retry."
+                )
+            ),
             http_status=response.status_code,
             google_status=google_status,
             google_message=google_message,

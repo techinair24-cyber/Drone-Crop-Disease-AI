@@ -684,7 +684,6 @@ export function RecommendationsPage() {
             <button className="button" onClick={closeSolution}>Close</button>
           </div>
           {selected.image_url && <img className="recommendation-solution-image" src={api.imageUrl(selected.image_url)} alt={`${selected.crop_name} leaf from detection`} />}
-          <div className="recommendation-model-limit" role="note">The crop and health models are unchanged. Gemini analyzes this saved leaf image and provides a tentative assessment, not a confirmed diagnosis. Inspect the crop and consult a qualified local adviser before disease-specific treatment. No pesticide products or dosages are prescribed.</div>
           <section className="recommendation-solution-section gemini-analysis-result" aria-label="Gemini image disease assessment">
             <h3>Gemini image assessment</h3>
             {selected.gemini_status === 'completed' && selected.gemini_analysis
@@ -708,7 +707,11 @@ export function RecommendationsPage() {
                 <p>{selected.gemini_analysis.expert_guidance}</p>
               </>
               : <>
-                <p>{selected.gemini_error || (selected.gemini_status === 'running' ? 'Gemini analysis is in progress.' : 'No Gemini image assessment is saved for this detection yet.')}</p>
+                <p>{selected.gemini_status === 'running'
+                  ? 'Gemini analysis is in progress.'
+                  : selected.gemini_status === 'failed' && /HTTP (429|503)/.test(selected.gemini_error || '')
+                    ? 'Gemini is temporarily unavailable due to high demand. Please retry shortly.'
+                    : selected.gemini_error || 'No Gemini image assessment is saved for this detection yet.'}</p>
                 <button className="button primary" onClick={() => retryGemini(selected)} disabled={geminiBusyId === selected.id || selected.gemini_status === 'running'}>
                   {geminiBusyId === selected.id ? 'Analyzing image…' : 'Retry Gemini analysis'}
                 </button>

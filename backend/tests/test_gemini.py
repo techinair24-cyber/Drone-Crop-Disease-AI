@@ -139,6 +139,137 @@ def test_gemini_logs_google_error_body_and_redacts_api_key(monkeypatch, caplog):
     assert "private image bytes" not in caplog.text
 
 
+def test_gemini_retries_429_and_503_with_increasing_delays(monkeypatch):
+    requests = []
+    delays = []
+    client_type = httpx.AsyncClient
+
+    async def no_wait(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr(gemini.asyncio, "sleep", no_wait)
+
+    def handler(request):
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={
+                "models": [{
+                    "name": "models/gemini-test-model",
+                    "supportedGenerationMethods": ["generateContent"],
+                }],
+            })
+        if request.url.path.endswith("/models/gemini-test-model:generateContent"):
+            if len([item for item in requests if item.method == "POST"]) == 1:
+                return httpx.Response(503, json={
+                    "error": {
+                        "status": "UNAVAILABLE",
+                        "message": "Model is experiencing high demand.",
+                    }
+                })
+            if len([item for item in requests if item.method == "POST"]) == 2:
+                return httpx.Response(429, json={
+                    "error": {
+                        "status": "RESOURCE_EXHAUSTED",
+                        "message": "Rate limit reached.",
+                    }
+                })
+        return httpx.Response(200, json={
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": json.dumps(valid_analysis())}]
+                }
+            }]
+        })
+
+    monkeypatch.setattr(
+        gemini.httpx,
+        "AsyncClient",
+        lambda timeout: client_type(
+            timeout=timeout,
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+
+    result = asyncio.run(gemini.analyze_leaf_image(
+        b"actual saved unhealthy leaf",
+        "Hibiscus",
+        "image/jpeg",
+        "test-secret",
+        "gemini-test-model",
+        "saved-hibiscus-detection",
+    ))
+
+    assert result == valid_analysis()
+    assert len([item for item in requests if item.method == "POST"]) == 3
+    assert delays == [1, 2]
+    for request in [item for item in requests if item.method == "POST"]:
+        body = json.loads(request.content)
+        image_part = next(
+            part["inline_data"]
+            for part in body["contents"][0]["parts"]
+            if "inline_data" in part
+        )
+        assert base64.b64decode(image_part["data"]) == b"actual saved unhealthy leaf"
+
+
+def test_gemini_exhausted_503_returns_temporary_unavailability(monkeypatch):
+    requests = []
+    delays = []
+    client_type = httpx.AsyncClient
+
+    async def no_wait(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr(gemini.asyncio, "sleep", no_wait)
+
+    def handler(request):
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={
+                "models": [{
+                    "name": "models/gemini-test-model",
+                    "supportedGenerationMethods": ["generateContent"],
+                }],
+            })
+        return httpx.Response(503, json={
+            "error": {
+                "status": "UNAVAILABLE",
+                "message": "High demand; do not show as a diagnosis.",
+            }
+        })
+
+    monkeypatch.setattr(
+        gemini.httpx,
+        "AsyncClient",
+        lambda timeout: client_type(
+            timeout=timeout,
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+
+    try:
+        asyncio.run(gemini.analyze_leaf_image(
+            b"actual image",
+            "Hibiscus",
+            "image/jpeg",
+            "test-secret",
+            "gemini-test-model",
+            "saved-hibiscus-detection",
+        ))
+    except gemini.GeminiAnalysisError as error:
+        assert error.http_status == 503
+        assert error.google_status == "UNAVAILABLE"
+        assert str(error) == (
+            "Gemini is temporarily unavailable due to high demand. "
+            "Please retry shortly."
+        )
+    else:
+        raise AssertionError("Gemini must not accept a 503 as a result.")
+
+    assert len([item for item in requests if item.method == "POST"]) == 3
+    assert delays == [1, 2]
+
+
 def test_model_list_requires_generate_content_support(monkeypatch):
     client_type = httpx.AsyncClient
 
