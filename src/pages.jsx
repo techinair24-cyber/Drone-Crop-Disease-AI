@@ -10,6 +10,7 @@ import { getCurrentLocation, hasValidCoordinates } from './location.js'
 import { getLatestDetection, scheduleMonitorRefresh } from './monitoring.js'
 import { SUPPORTED_CROPS } from './supportedCrops.js'
 import { predictCrop } from './cropPrediction.js'
+import { getCropRecommendation, getDetectionHealthStatus } from './recommendationKnowledge.js'
 
 const ActivityChart = lazy(() => import('./ActivityChart.jsx'))
 const DetectionMap = lazy(() => import('./DetectionMap.jsx'))
@@ -170,7 +171,13 @@ export function MonitorPage() {
     try {
       const location = await getCurrentLocation()
       setLocationMessage(location.message)
-      const response = await predictCrop(api, file, selectedCrop, location.coordinates)
+      const response = await predictCrop(
+        api,
+        file,
+        selectedCrop,
+        location.coordinates,
+        'live_monitoring',
+      )
       setResult(response)
       sessionStorage.setItem('latestAnalysis', JSON.stringify(response))
     } catch (cause) { setError(cause) } finally { setBusy(false) }
@@ -226,7 +233,10 @@ export function MonitorPage() {
             <div className="result-row"><span>Health status</span><strong><span className={`badge ${record.classification === 'diseased' ? 'disease' : 'neutral'}`}>{record.health_status || (record.classification === 'healthy' ? 'Healthy' : record.classification === 'diseased' ? 'Unhealthy' : 'Unknown')}</span></strong></div>
             <div className="result-row"><span>Health confidence</span><strong>{score(record.health_confidence ?? record.prediction_score)}</strong></div>
             {record.message && <p role="status">{record.message}</p>}
-            <button className="button" style={{ marginTop: 12 }} onClick={() => navigate('/analysis')}>View analysis <ArrowRight size={13} /></button>
+            <div className="recommendation-solution-actions">
+              <button className="button" onClick={() => navigate('/analysis')}>View analysis <ArrowRight size={13} /></button>
+              <Link className="button ghost" to={record.id ? `/recommendations?detection=${encodeURIComponent(record.id)}` : '/recommendations'}>Crop guidance</Link>
+            </div>
           </div>}
         </div>
       </div>
@@ -263,7 +273,13 @@ export function AnalysisPage() {
     try {
       const location = await getCurrentLocation()
       setLocationMessage(location.message)
-      const response = await predictCrop(api, file, selectedCrop, location.coordinates)
+      const response = await predictCrop(
+        api,
+        file,
+        selectedCrop,
+        location.coordinates,
+        'analysis',
+      )
       setLatest(response)
       sessionStorage.setItem('latestAnalysis', JSON.stringify(response))
     } catch (cause) { setError(cause) } finally { setBusy(false) }
@@ -343,7 +359,7 @@ export function AnalysisPage() {
                 </div>}
                 <div className="analysis-result-links">
                   <Link className="button" to={record.id ? `/history?id=${encodeURIComponent(record.id)}` : '/history'}>View history</Link>
-                  <Link className="button ghost" to="/recommendations">Guidance</Link>
+                  <Link className="button ghost" to={record.id ? `/recommendations?detection=${encodeURIComponent(record.id)}` : '/recommendations'}>Crop guidance</Link>
                 </div>
               </>}
         </section>
@@ -528,41 +544,148 @@ export function HistoryPage() {
 }
 
 export function RecommendationsPage() {
-  const [latest] = useState(readStoredAnalysis)
-  const record = latest?.detection || latest
-  const recommendations = record?.treatment_recommendations ?? record?.recommendations
-  const recommendationValues = Array.isArray(recommendations)
-    ? recommendations
-    : typeof recommendations === 'string' && recommendations.trim()
-      ? [recommendations]
-      : []
-  const recommendationItems = recommendationValues
-    .map((item) => typeof item === 'string'
-      ? { title: '', content: item }
-      : { title: item?.title || '', content: item?.recommendation || item?.text || '' })
-    .filter((item) => typeof item.content === 'string' && item.content.trim())
-  const guidance = healthGuidance(record)
-  if (!recommendationItems.length && guidance) {
-    recommendationItems.push({ title: '', content: guidance })
+  const detections = useLoad(() => api.allRecommendations(), [])
+  const [cropFilter, setCropFilter] = useState('')
+  const [reviewBusyId, setReviewBusyId] = useState('')
+  const [reviewError, setReviewError] = useState(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedId = searchParams.get('detection')
+  const records = (detections.data?.items || []).filter((record) => (
+    record.id
+    && record.image_url
+    && ['analysis', 'live_monitoring'].includes(record.source)
+    && SUPPORTED_CROPS.includes(record.crop_name)
+    && getDetectionHealthStatus(record) === 'Unhealthy'
+  ))
+  const summary = detections.data?.summary
+  const cropCounts = SUPPORTED_CROPS.map((crop) => ({
+    crop,
+    count: summary?.crop_counts?.[crop] || 0,
+  }))
+  const filteredRecords = records.filter((record) => !cropFilter || record.crop_name === cropFilter)
+  const selected = filteredRecords.find((record) => record.id === selectedId)
+    || records.find((record) => record.id === selectedId)
+  const closeSolution = () => setSearchParams({})
+  const showSolution = (record) => setSearchParams({ detection: record.id })
+  const markReviewed = async (record) => {
+    setReviewError(null)
+    setReviewBusyId(record.id)
+    try {
+      await api.markRecommendationReviewed(record.id)
+      await detections.refresh()
+    } catch (cause) {
+      setReviewError(cause)
+    } finally {
+      setReviewBusyId('')
+    }
   }
+  const recommendationsFor = (record) => getCropRecommendation(record.crop_name)
+
   return <>
     <div className="recommendations-page">
       <div className="recommendations-heading">
         <div>
-          <h1 className="page-title">Recommendations</h1>
-          {recommendationItems.length > 0 && record?.disease_name && <div className="recommendations-context">{record.disease_name}</div>}
+          <h1 className="page-title">Crop Treatment &amp; Solution Centre</h1>
+          <div className="recommendations-context">Crop-specific guidance linked to saved AI detections</div>
         </div>
+        <button className="button" onClick={detections.refresh} disabled={detections.busy}><RefreshCw size={14} className={detections.busy ? 'spin' : ''} />Refresh</button>
       </div>
-      {recommendationItems.length > 0
-        ? <section className="card recommendations-card" aria-label="Recommendations">
-          <div className="recommendations-list">
-            {recommendationItems.map((item, index) => <article className="recommendation-item" key={`${index}-${item.title}-${item.content}`}>
-              {item.title && <h2>{item.title}</h2>}
-              <p>{item.content}</p>
-            </article>)}
+      {detections.error && <ErrorNotice error={detections.error} onRetry={detections.refresh} />}
+      {reviewError && <ErrorNotice error={reviewError} />}
+      {!detections.error && <div className="recommendations-summary">
+        <article className="card recommendations-metric"><span>Total unhealthy detections</span><strong>{detections.busy && !detections.data ? '…' : summary?.total_unhealthy ?? 0}</strong></article>
+        <article className="card recommendations-metric"><span>Pending recommendations</span><strong>{detections.busy && !detections.data ? '…' : summary?.pending ?? 0}</strong></article>
+        <article className="card recommendations-metric"><span>Reviewed recommendations</span><strong>{detections.busy && !detections.data ? '…' : summary?.reviewed ?? 0}</strong></article>
+      </div>}
+      {!detections.error && <section className="card recommendations-crop-summary" aria-label="Unhealthy detections by crop">
+        <div className="card-heading"><div className="card-title">Crop-wise unhealthy detections</div></div>
+        <div className="recommendations-crop-counts">
+          {cropCounts.map(({ crop, count }) => <div className="recommendations-crop-count" key={crop}><span>{crop}</span><strong>{count}</strong></div>)}
+        </div>
+      </section>}
+      <section className="card recommendations-records-card" aria-label="Detection recommendations">
+        <div className="recommendations-filters">
+          <label className="recommendations-filter">Crop
+            <select className="select" aria-label="Filter recommendations by crop" value={cropFilter} onChange={(event) => setCropFilter(event.target.value)}>
+              <option value="">All crops</option>
+              {SUPPORTED_CROPS.map((crop) => <option key={crop} value={crop}>{crop}</option>)}
+            </select>
+          </label>
+          <span className="recommendations-result-count">{filteredRecords.length} detection{filteredRecords.length === 1 ? '' : 's'}</span>
+        </div>
+        {detections.error && !detections.data
+          ? <div className="recommendations-empty" role="alert">Saved detections could not be loaded.</div>
+          : detections.busy && !detections.data
+          ? <div className="recommendations-empty" role="status">Loading saved detections…</div>
+          : filteredRecords.length
+            ? <div className="recommendations-grid">{filteredRecords.map((record) => {
+              const guidance = recommendationsFor(record)
+              return <article className="card recommendation-detection-card" key={record.id}>
+                <div className="recommendation-card-image">
+                  {record.image_url
+                    ? <img src={api.imageUrl(record.image_url)} alt={`${record.crop_name} leaf from detection`} loading="lazy" />
+                    : <div className="recommendation-image-empty"><Leaf size={24} /><span>Image unavailable</span></div>}
+                  <span className={`badge ${status === 'Unhealthy' ? 'disease' : ''}`}>{status}</span>
+                </div>
+                <div className="recommendation-card-content">
+                  <div className="recommendation-card-title"><h2>{record.crop_name}</h2></div>
+                  <div className="recommendation-confidence-row">
+                    <span>Health confidence <strong>{score(record.health_confidence ?? record.prediction_score)}</strong></span>
+                    {Number.isFinite(record.crop_confidence) && <span>Crop confidence <strong>{score(record.crop_confidence)}</strong></span>}
+                  </div>
+                  <div className="recommendation-card-date">{formatDate(record.created_at)}</div>
+                  <div className="recommendation-card-source">Source: {record.source === 'live_monitoring' ? 'Live Monitoring' : 'AI Analysis'}</div>
+                  <p className="recommendation-card-overview">{guidance?.overview}</p>
+                  <div className="recommendation-immediate"><strong>First action</strong><span>{guidance.immediateAction}</span></div>
+                  <div className="recommendation-card-actions">
+                    <button className="button primary" onClick={() => showSolution(record)}>View solution</button>
+                    <span className={`recommendation-review-state${record.recommendation_reviewed ? ' reviewed' : ''}`}>
+                      {record.recommendation_reviewed ? 'Reviewed' : 'Pending'}
+                    </span>
+                  </div>
+                </div>
+              </article>
+            })}</div>
+            : <div className="recommendations-empty">{records.length === 0
+              ? 'No unhealthy detections yet. Analyze a leaf image or start live monitoring to receive crop-specific recommendations.'
+              : 'No detections match this crop filter.'}</div>}
+      </section>
+      {selected && <div className="modal-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) closeSolution() }}>
+        <section className="modal recommendation-solution-modal" role="dialog" aria-modal="true" aria-labelledby="recommendation-solution-title">
+          <div className="modal-header">
+            <div><h2 className="card-title" id="recommendation-solution-title">{selected.crop_name} · Unhealthy</h2><div className="recommendations-context">Source: {selected.source === 'live_monitoring' ? 'Live Monitoring' : 'AI Analysis'} · {formatDate(selected.created_at)} · Health confidence {score(selected.health_confidence ?? selected.prediction_score)}{Number.isFinite(selected.crop_confidence) ? ` · Crop confidence ${score(selected.crop_confidence)}` : ''}</div></div>
+            <button className="button" onClick={closeSolution}>Close</button>
+          </div>
+          {selected.image_url && <img className="recommendation-solution-image" src={api.imageUrl(selected.image_url)} alt={`${selected.crop_name} leaf from detection`} />}
+          <div className="recommendation-model-limit" role="note">The AI classifies leaf health as Healthy or Unhealthy only; it does not identify a disease. The possible causes below are not diagnoses. Inspect the crop and consult a qualified local adviser before disease-specific treatment.</div>
+          <div className="recommendation-solution-sections">
+            {[
+              ['Overview', 'overview'],
+              ['Symptoms to inspect', 'symptoms'],
+              ['Possible causes (not a diagnosis)', 'possibleCauses'],
+              ['Immediate treatment steps', 'immediateActions'],
+              ['Organic management options', 'organicManagement'],
+              ['Prevention', 'prevention'],
+              ['Water and soil management', 'waterAndSoil'],
+              ['Safe treatment guidance', 'safeTreatment'],
+              ['Follow-up monitoring', 'followUp'],
+              ['When to seek expert help', 'expert'],
+            ].map(([title, key]) => {
+              const value = recommendationsFor(selected)?.[key]
+              return <section className="recommendation-solution-section" key={key}>
+                <h3>{title}</h3>
+                {Array.isArray(value) ? <ul>{value.map((item) => <li key={item}>{item}</li>)}</ul> : <p>{value}</p>}
+              </section>
+            })}
+          </div>
+          <div className="recommendation-solution-actions">
+            <Link className="button" to={`/history?id=${encodeURIComponent(selected.id)}`} onClick={closeSolution}>View detection record</Link>
+            <button className="button primary" onClick={() => markReviewed(selected)} disabled={reviewBusyId === selected.id || selected.recommendation_reviewed}>
+              <Check size={14} />{reviewBusyId === selected.id ? 'Saving…' : selected.recommendation_reviewed ? 'Reviewed' : 'Mark as reviewed'}
+            </button>
           </div>
         </section>
-        : <div className="recommendations-empty">No recommendations available</div>}
+      </div>}
     </div>
   </>
 }

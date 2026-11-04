@@ -20,6 +20,8 @@ class Detection(BaseModel):
     health_confidence: float | None = Field(default=None, ge=0, le=1)
     health_probabilities: dict[str, float] | None = None
     message: str | None = None
+    recommendation_reviewed: bool = False
+    source: Literal["analysis", "live_monitoring"] | None = None
     disease_name: str
     classification: Literal["healthy", "diseased", "inconclusive"]
     prediction_score: float | None = Field(default=None, ge=0, le=1)
@@ -40,6 +42,22 @@ class DetectionPage(BaseModel):
     page_size: int
     total: int
     pages: int
+
+
+class RecommendationSummary(BaseModel):
+    total_unhealthy: int
+    pending: int
+    reviewed: int
+    crop_counts: dict[str, int]
+
+
+class RecommendationPage(BaseModel):
+    items: list[Detection]
+    page: int
+    page_size: int
+    total: int
+    pages: int
+    summary: RecommendationSummary
 
 
 class ModelStatus(BaseModel):

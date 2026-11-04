@@ -27,6 +27,8 @@ class DetectionStore:
                     health_confidence REAL,
                     health_probabilities TEXT,
                     message TEXT,
+                    recommendation_reviewed INTEGER NOT NULL DEFAULT 0,
+                    source TEXT,
                     disease_name TEXT NOT NULL,
                     classification TEXT NOT NULL,
                     prediction_score REAL,
@@ -49,6 +51,8 @@ class DetectionStore:
                 ("health_confidence", "REAL"),
                 ("health_probabilities", "TEXT"),
                 ("message", "TEXT"),
+                ("recommendation_reviewed", "INTEGER NOT NULL DEFAULT 0"),
+                ("source", "TEXT"),
                 ("gps_fix_valid", "INTEGER"),
                 ("gps_timestamp", "TEXT"),
                 ("captured_at", "TEXT"),
@@ -72,16 +76,25 @@ class DetectionStore:
             connection.close()
 
     def create(self, record: dict[str, Any]) -> dict[str, Any]:
-        stored = {**record, "created_at": datetime.now(timezone.utc).isoformat()}
+        stored = {
+            **record,
+            "recommendation_reviewed": bool(
+                record.get("recommendation_reviewed", False)
+            ),
+            "source": record.get("source"),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
         with self._connect() as connection:
             connection.execute(
                 """INSERT INTO detections
                 (id, filename, crop_name, crop_confidence, health_status, health_confidence,
-                 health_probabilities, message, disease_name, classification, prediction_score,
+                 health_probabilities, message, recommendation_reviewed, disease_name,
+                 source, classification, prediction_score,
                  created_at, latitude, longitude, gps_fix_valid, gps_timestamp, captured_at,
                  model_name, model_version, top_predictions)
                 VALUES (:id, :filename, :crop_name, :crop_confidence, :health_status, :health_confidence,
-                 :health_probabilities, :message, :disease_name, :classification, :prediction_score,
+                 :health_probabilities, :message, :recommendation_reviewed, :disease_name,
+                 :source, :classification, :prediction_score,
                  :created_at, :latitude, :longitude, :gps_fix_valid, :gps_timestamp, :captured_at,
                  :model_name, :model_version, :top_predictions)""",
                 {
@@ -95,6 +108,59 @@ class DetectionStore:
                 },
             )
         return self._serialize(stored)
+
+    def list_recommendations(
+        self, page: int = 1, page_size: int = 100
+    ) -> dict[str, Any]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM detections
+                WHERE source IN ('analysis', 'live_monitoring')
+                  AND health_status = 'Unhealthy'
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
+
+        qualified_rows = []
+        for raw_row in rows:
+            row = dict(raw_row)
+            if not self.has_saved_image(row["filename"]):
+                continue
+            qualified_rows.append(self._serialize(row))
+
+        total = len(qualified_rows)
+        pages = (total + page_size - 1) // page_size
+        start = (page - 1) * page_size
+        page_items = qualified_rows[start : start + page_size]
+        reviewed = sum(
+            bool(row["recommendation_reviewed"]) for row in qualified_rows
+        )
+        crop_counts: dict[str, int] = {}
+        for row in qualified_rows:
+            crop = row["crop_name"] or "Unknown"
+            crop_counts[crop] = crop_counts.get(crop, 0) + 1
+
+        return {
+            "items": page_items,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "pages": pages,
+            "summary": {
+                "total_unhealthy": total,
+                "pending": total - reviewed,
+                "reviewed": reviewed,
+                "crop_counts": crop_counts,
+            },
+        }
+
+    def has_saved_image(self, filename: str | None) -> bool:
+        if not filename:
+            return False
+        uploads_path = self.uploads_path.resolve()
+        image_path = (uploads_path / filename).resolve()
+        return image_path.parent == uploads_path and image_path.is_file()
 
     def list(
         self,
@@ -143,6 +209,21 @@ class DetectionStore:
     def get(self, detection_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM detections WHERE id = ?", (detection_id,)).fetchone()
+        return self._serialize(dict(row)) if row else None
+
+    def mark_recommendation_reviewed(
+        self, detection_id: str, reviewed: bool = True
+    ) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE detections SET recommendation_reviewed = ? WHERE id = ?",
+                (int(reviewed), detection_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+            row = connection.execute(
+                "SELECT * FROM detections WHERE id = ?", (detection_id,)
+            ).fetchone()
         return self._serialize(dict(row)) if row else None
 
     def stats(self) -> dict[str, Any]:
@@ -210,6 +291,10 @@ class DetectionStore:
             "health_confidence": row.get("health_confidence"),
             "health_probabilities": health_probabilities,
             "message": row.get("message"),
+            "recommendation_reviewed": bool(
+                row.get("recommendation_reviewed", False)
+            ),
+            "source": row.get("source"),
             "disease_name": row["disease_name"],
             "classification": row["classification"],
             "prediction_score": row["prediction_score"],

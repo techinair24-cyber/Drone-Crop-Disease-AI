@@ -50,6 +50,9 @@ class ReadyHealthModel:
     version = "test"
     supported_crops = SUPPORTED_CROPS
 
+    def __init__(self, health_status="Unhealthy"):
+        self.health_status = health_status
+
     def load(self):
         pass
 
@@ -65,11 +68,16 @@ class ReadyHealthModel:
     def predict(self, image_bytes, crop_name):
         assert image_bytes
         assert crop_name in SUPPORTED_CROPS
+        healthy_probability = 0.91 if self.health_status == "Healthy" else 0.16
+        unhealthy_probability = 1 - healthy_probability
         return {
-            "health_status": "Unhealthy",
-            "health_confidence": 0.84,
-            "health_probabilities": {"Healthy": 0.16, "Unhealthy": 0.84},
-            "message": f"{crop_name} classified as Unhealthy.",
+            "health_status": self.health_status,
+            "health_confidence": max(healthy_probability, unhealthy_probability),
+            "health_probabilities": {
+                "Healthy": healthy_probability,
+                "Unhealthy": unhealthy_probability,
+            },
+            "message": f"{crop_name} classified as {self.health_status}.",
         }
 
 
@@ -89,9 +97,11 @@ class UnavailableModel:
         }
 
 
-def install_ready_models(monkeypatch, crop_name="Hibiscus"):
+def install_ready_models(
+    monkeypatch, crop_name="Hibiscus", health_status="Unhealthy"
+):
     monkeypatch.setattr(main, "crop_model", ReadyCropModel(crop_name))
-    monkeypatch.setattr(main, "health_model", ReadyHealthModel())
+    monkeypatch.setattr(main, "health_model", ReadyHealthModel(health_status))
 
 
 @pytest.fixture
@@ -203,6 +213,8 @@ def test_existing_history_schema_migrates_without_losing_records(tmp_path):
     assert result["latitude"] == 12.4
     assert result["health_status"] is None
     assert result["health_probabilities"] is None
+    assert result["recommendation_reviewed"] is False
+    assert result["source"] is None
 
 
 def test_missing_detection_returns_404(client):
@@ -442,6 +454,7 @@ def test_predict_classifies_all_supported_crops_and_lists_history(
             "Healthy": 0.16,
             "Unhealthy": 0.84,
         }
+        assert detection["recommendation_reviewed"] is False
         detections.append(detection)
 
     history = client.get("/api/detections").json()
@@ -454,6 +467,180 @@ def test_predict_classifies_all_supported_crops_and_lists_history(
     assert hibiscus_history["total"] == 1
     assert hibiscus_history["items"][0]["crop_name"] == "Hibiscus"
     assert client.get("/api/stats").json()["total_images"] == len(SUPPORTED_CROPS)
+
+
+def test_recommendations_only_include_real_sourced_unhealthy_images(
+    client, monkeypatch
+):
+    install_ready_models(monkeypatch, crop_name="Apple")
+    apple = client.post(
+        "/api/predict",
+        files={"file": ("apple.png", make_image(), "image/png")},
+        data={"source": "analysis"},
+    )
+    assert apple.status_code == 201
+    assert apple.json()["source"] == "analysis"
+
+    install_ready_models(monkeypatch, crop_name="Chilli")
+    chilli = client.post(
+        "/api/predict",
+        files={"file": ("chilli.png", make_image("PNG", "red"), "image/png")},
+        data={"source": "live_monitoring"},
+    )
+    assert chilli.status_code == 201
+    assert chilli.json()["source"] == "live_monitoring"
+
+    install_ready_models(
+        monkeypatch, crop_name="Tomato", health_status="Healthy"
+    )
+    healthy = client.post(
+        "/api/predict",
+        files={"file": ("tomato.png", make_image("PNG", "yellow"), "image/png")},
+        data={"source": "analysis"},
+    )
+    assert healthy.status_code == 201
+
+    # Legacy rows without provenance and records without a stored image remain
+    # in history but must not be presented as user recommendations.
+    main.settings.uploads_path.mkdir(parents=True, exist_ok=True)
+    (main.settings.uploads_path / "legacy-unverified.png").write_bytes(
+        make_image()
+    )
+    for detection_id, filename, source in (
+        ("unverified-legacy", "legacy-unverified.png", None),
+        ("missing-saved-image", "missing-image.png", "analysis"),
+    ):
+        main.store.create({
+            "id": detection_id,
+            "filename": filename,
+            "crop_name": "Wheat",
+            "crop_confidence": 0.9,
+            "health_status": "Unhealthy",
+            "health_confidence": 0.9,
+            "health_probabilities": {"Healthy": 0.1, "Unhealthy": 0.9},
+            "message": "test record",
+            "source": source,
+            "disease_name": "Unhealthy",
+            "classification": "diseased",
+            "prediction_score": 0.9,
+            "latitude": None,
+            "longitude": None,
+            "gps_fix_valid": None,
+            "gps_timestamp": None,
+            "captured_at": None,
+            "model_name": "test",
+            "model_version": "test",
+            "top_predictions": [],
+        })
+
+    recommendations = client.get("/api/recommendations").json()
+    assert recommendations["total"] == 2
+    assert recommendations["summary"] == {
+        "total_unhealthy": 2,
+        "pending": 2,
+        "reviewed": 0,
+        "crop_counts": {"Apple": 1, "Chilli": 1},
+    }
+    assert {item["source"] for item in recommendations["items"]} == {
+        "analysis",
+        "live_monitoring",
+    }
+    assert all(item["image_url"] and item["id"] for item in recommendations["items"])
+    for item in recommendations["items"]:
+        image_response = client.get(item["image_url"])
+        assert image_response.status_code == 200
+
+    reviewed = client.post(
+        f"/api/detections/{apple.json()['id']}/recommendation-review"
+    )
+    assert reviewed.status_code == 200
+    summary = client.get("/api/recommendations").json()["summary"]
+    assert summary["pending"] == 1
+    assert summary["reviewed"] == 1
+
+
+def test_predict_rejects_unknown_detection_source(client, monkeypatch):
+    install_ready_models(monkeypatch)
+    response = client.post(
+        "/api/predict",
+        files={"file": ("leaf.png", make_image(), "image/png")},
+        data={"source": "seed"},
+    )
+    assert response.status_code == 422
+
+
+def test_unhealthy_recommendation_review_is_persisted(client, monkeypatch):
+    install_ready_models(monkeypatch, crop_name="Apple")
+    prediction = client.post(
+        "/api/predict",
+        files={"file": ("apple.png", make_image(), "image/png")},
+    )
+    assert prediction.status_code == 201
+    detection = prediction.json()
+    assert detection["recommendation_reviewed"] is False
+
+    reviewed = client.post(
+        f"/api/detections/{detection['id']}/recommendation-review"
+    )
+    assert reviewed.status_code == 200
+    assert reviewed.json()["recommendation_reviewed"] is True
+    assert client.get(
+        f"/api/detections/{detection['id']}"
+    ).json()["recommendation_reviewed"] is True
+    assert client.get("/api/detections").json()["items"][0][
+        "recommendation_reviewed"
+    ] is True
+
+
+def test_healthy_detection_cannot_be_marked_as_treatment_reviewed(
+    client, monkeypatch
+):
+    install_ready_models(
+        monkeypatch, crop_name="Tomato", health_status="Healthy"
+    )
+    prediction = client.post(
+        "/api/predict",
+        files={"file": ("tomato.png", make_image(), "image/png")},
+    )
+    assert prediction.status_code == 201
+    assert prediction.json()["recommendation_reviewed"] is False
+
+    response = client.post(
+        f"/api/detections/{prediction.json()['id']}/recommendation-review"
+    )
+    assert response.status_code == 422
+    assert "Only unhealthy detections" in response.json()["detail"]
+
+
+def test_unverified_legacy_unhealthy_hibiscus_cannot_be_reviewed(client):
+    main.store.create({
+        "id": "legacy-hibiscus",
+        "filename": "legacy-hibiscus.jpg",
+        "crop_name": "Hibiscus",
+        "crop_confidence": None,
+        "health_status": None,
+        "health_confidence": None,
+        "health_probabilities": None,
+        "message": None,
+        "disease_name": "Legacy result",
+        "classification": "diseased",
+        "prediction_score": 0.75,
+        "latitude": None,
+        "longitude": None,
+        "gps_fix_valid": None,
+        "gps_timestamp": None,
+        "captured_at": None,
+        "model_name": "Legacy Hibiscus model",
+        "model_version": "legacy",
+        "top_predictions": [],
+    })
+
+    response = client.post(
+        "/api/detections/legacy-hibiscus/recommendation-review"
+    )
+
+    assert response.status_code == 422
+    assert "verified user detections" in response.json()["detail"]
 
 
 def test_predict_rejects_unsupported_crop_selection(client):

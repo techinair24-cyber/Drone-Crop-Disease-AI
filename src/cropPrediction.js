@@ -1,11 +1,17 @@
 import { SUPPORTED_CROPS } from './supportedCrops.js'
 
-export async function predictCrop(api, file, selectedCrop, location) {
+export async function predictCrop(
+  api,
+  file,
+  selectedCrop,
+  location,
+  source = 'analysis',
+) {
   if (selectedCrop && !SUPPORTED_CROPS.includes(selectedCrop)) {
     throw new Error('The selected crop is not supported.')
   }
 
-  const result = await api.predict(file, selectedCrop, location)
+  const result = await api.predict(file, selectedCrop, location, source)
   if (!SUPPORTED_CROPS.includes(result?.crop_name)) {
     throw new Error('Prediction returned an unsupported crop.')
   }

@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from io import BytesIO
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +22,7 @@ from .schemas import (
     Detection,
     DetectionPage,
     HealthResponse,
+    RecommendationPage,
     StatsResponse,
     SystemStatus,
 )
@@ -214,6 +215,14 @@ def list_detections(
     )
 
 
+@app.get("/api/recommendations", response_model=RecommendationPage)
+def list_recommendations(
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 100,
+) -> dict:
+    return store.list_recommendations(page, page_size)
+
+
 @app.get("/api/detections/{detection_id}", response_model=Detection)
 def get_detection(detection_id: str) -> dict:
     detection = store.get(detection_id)
@@ -225,6 +234,39 @@ def get_detection(detection_id: str) -> dict:
         )
 
     return detection
+
+
+@app.post(
+    "/api/detections/{detection_id}/recommendation-review",
+    response_model=Detection,
+)
+def mark_recommendation_reviewed(detection_id: str) -> dict:
+    detection = store.get(detection_id)
+    if detection is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Detection record not found.",
+        )
+    if detection["source"] not in {"analysis", "live_monitoring"} or not store.has_saved_image(
+        Path(detection["image_url"]).name
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Only verified user detections with a saved image can be reviewed.",
+        )
+    if detection["health_status"] != "Unhealthy":
+        raise HTTPException(
+            status_code=422,
+            detail="Only unhealthy detections have treatment recommendations.",
+        )
+
+    updated = store.mark_recommendation_reviewed(detection_id)
+    if updated is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Detection record not found.",
+        )
+    return updated
 
 
 @app.get("/api/locations", response_model=DetectionPage)
@@ -302,6 +344,7 @@ async def predict_crop(file: Annotated[UploadFile, File()]):
 @app.post("/api/predict", response_model=Detection, status_code=201)
 async def predict(
     file: Annotated[UploadFile, File()],
+    source: Annotated[Literal["analysis", "live_monitoring"], Form()] = "analysis",
     crop_name: Annotated[str | None, Form()] = None,
     latitude: Annotated[float | None, Form(ge=-90, le=90)] = None,
     longitude: Annotated[float | None, Form(ge=-180, le=180)] = None,
@@ -425,6 +468,7 @@ async def predict(
             "health_confidence": result["health_confidence"],
             "health_probabilities": result["health_probabilities"],
             "message": result["message"],
+            "source": source,
             "disease_name": result["health_status"],
             "classification": (
                 "healthy"

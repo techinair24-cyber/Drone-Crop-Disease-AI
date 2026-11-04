@@ -42,7 +42,44 @@ export const api = {
     })
     return request(`/api/detections${query.size ? `?${query}` : ''}`)
   },
+  allDetections: async (params = {}) => {
+    const items = []
+    let page = 1
+    let pages = 1
+    do {
+      const result = await api.detections({ ...params, page, page_size: 100 })
+      items.push(...result.items)
+      pages = result.pages
+      page += 1
+    } while (page <= pages)
+    return items
+  },
   detection: (id) => request(`/api/detections/${encodeURIComponent(id)}`),
+  markRecommendationReviewed: (id) => request(
+    `/api/detections/${encodeURIComponent(id)}/recommendation-review`,
+    { method: 'POST' },
+  ),
+  recommendations: (params = {}) => {
+    const query = new URLSearchParams()
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== '' && value !== null && value !== undefined) query.set(key, value)
+    })
+    return request(`/api/recommendations${query.size ? `?${query}` : ''}`)
+  },
+  allRecommendations: async () => {
+    const items = []
+    let page = 1
+    let pages = 1
+    let summary = null
+    do {
+      const result = await api.recommendations({ page, page_size: 100 })
+      items.push(...result.items)
+      pages = result.pages
+      summary = result.summary
+      page += 1
+    } while (page <= pages)
+    return { items, summary }
+  },
   locations: (params = {}) => {
     const query = new URLSearchParams()
     Object.entries(params).forEach(([key, value]) => {
@@ -62,9 +99,10 @@ export const api = {
     } while (page <= pages)
     return items
   },
-  predict: (file, cropName = '', location = null) => {
+  predict: (file, cropName = '', location = null, source = 'analysis') => {
     const form = new FormData()
     form.append('file', file)
+    form.append('source', source)
     if (cropName) form.append('crop_name', cropName)
     if (location) {
       form.append('latitude', location.latitude)

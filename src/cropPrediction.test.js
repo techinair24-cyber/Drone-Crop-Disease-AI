@@ -34,12 +34,12 @@ function createApi(cropName, healthStatus = 'Healthy') {
   }
 }
 
-test('sends each manually selected crop through full prediction', async () => {
+test('sends each manually selected crop through full prediction with its source', async () => {
   for (const crop of SUPPORTED_CROPS) {
     const api = createApi(crop, 'Unhealthy')
     const result = await predictCrop(api, file, crop, location)
 
-    assert.deepEqual(api.calls, [[file, crop, location]])
+    assert.deepEqual(api.calls, [[file, crop, location, 'analysis']])
     assert.equal(result.crop_name, crop)
     assert.equal(result.health_status, 'Unhealthy')
     assert.equal(result.crop_confidence, 0.95)
@@ -52,10 +52,18 @@ test('sends automatic selection through full crop and health prediction', async 
     const api = createApi(crop)
     const result = await predictCrop(api, file, '', location)
 
-    assert.deepEqual(api.calls, [[file, '', location]])
+    assert.deepEqual(api.calls, [[file, '', location, 'analysis']])
     assert.equal(result.crop_name, crop)
     assert.ok(['Healthy', 'Unhealthy'].includes(result.health_status))
   }
+})
+
+test('records Monitor predictions with live-monitoring source', async () => {
+  const api = createApi('Apple', 'Unhealthy')
+  const result = await predictCrop(api, file, '', location, 'live_monitoring')
+
+  assert.deepEqual(api.calls, [[file, '', location, 'live_monitoring']])
+  assert.equal(result.health_status, 'Unhealthy')
 })
 
 test('rejects invalid manual selection before requesting prediction', async () => {
