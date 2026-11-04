@@ -17,6 +17,7 @@ from PIL import Image, UnidentifiedImageError
 
 from .config import get_settings
 from .hibiscus_adapter import HibiscusModel
+from .crop_adapter import CropModel
 from .schemas import (
     Detection,
     DetectionPage,
@@ -42,6 +43,12 @@ hibiscus_model_path = (
     / "hibiscus_model.pth"
 )
 model = HibiscusModel(hibiscus_model_path)
+crop_model_path = (
+    Path(__file__).resolve().parents[1]
+    / "models"
+    / "crop_classifier_best.keras"
+)
+crop_model = CropModel(crop_model_path)
 
 if not settings.cors_origins:
     raise ValueError("CORS_ORIGINS must contain at least one allowed origin.")
@@ -63,6 +70,7 @@ if settings.gps_max_skew_seconds < 0:
 async def lifespan(_: FastAPI):
     store.initialize()
     model.load()
+    crop_model.load()
     yield
 
 
@@ -289,6 +297,50 @@ def stats() -> dict:
         ],
         "activity": activity,
     }
+
+
+@app.post("/api/crop-predict")
+async def predict_crop(file: Annotated[UploadFile, File()]):
+    image_bytes = await file.read(settings.max_upload_bytes + 1)
+
+    if len(image_bytes) > settings.max_upload_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail="Image exceeds the upload size limit.",
+        )
+
+    try:
+        with Image.open(BytesIO(image_bytes)) as image:
+            image_format = image.format
+            image.verify()
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+        raise HTTPException(
+            status_code=415,
+            detail="Upload a valid JPG or PNG image.",
+        ) from exc
+
+    if image_format not in {"JPEG", "PNG"}:
+        raise HTTPException(
+            status_code=415,
+            detail="Only JPG, JPEG, and PNG images are supported.",
+        )
+
+    if not crop_model.available:
+        raise HTTPException(
+            status_code=503,
+            detail=crop_model.status()["message"],
+        )
+
+    try:
+        return crop_model.predict(image_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Crop prediction failed.")
+        raise HTTPException(
+            status_code=500,
+            detail="Crop prediction failed.",
+        ) from exc
 
 
 @app.post("/api/predict", response_model=Detection, status_code=201)

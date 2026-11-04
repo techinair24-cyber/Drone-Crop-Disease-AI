@@ -72,6 +72,14 @@ export const api = {
     }
     return request('/api/predict', { method: 'POST', body: form })
   },
+  cropPredict: (file) => {
+    const form = new FormData()
+    form.append('file', file)
+    return request('/api/crop-predict', {
+      method: 'POST',
+      body: form,
+    })
+  },
   imageUrl: (path) => path?.startsWith('http') ? path : `${getApiBase()}${path || ''}`,
 }
 
