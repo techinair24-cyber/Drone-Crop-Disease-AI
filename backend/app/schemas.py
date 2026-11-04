@@ -15,6 +15,11 @@ class Detection(BaseModel):
     id: str
     image_url: str
     crop_name: str | None = None
+    crop_confidence: float | None = Field(default=None, ge=0, le=1)
+    health_status: Literal["Healthy", "Unhealthy"] | None = None
+    health_confidence: float | None = Field(default=None, ge=0, le=1)
+    health_probabilities: dict[str, float] | None = None
+    message: str | None = None
     disease_name: str
     classification: Literal["healthy", "diseased", "inconclusive"]
     prediction_score: float | None = Field(default=None, ge=0, le=1)

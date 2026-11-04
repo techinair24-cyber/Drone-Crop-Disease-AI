@@ -1,4 +1,5 @@
 
+import sqlite3
 from dataclasses import replace
 from io import BytesIO
 
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from backend.app import main
+from backend.app.crop_adapter import SUPPORTED_CROPS
 from backend.app.storage import DetectionStore
 
 
@@ -16,14 +18,21 @@ def make_image(image_format="PNG", color="green"):
     return image.getvalue()
 
 
-class ReadyModel:
+class ReadyCropModel:
     available = True
+
+    def __init__(self, crop_name="Hibiscus"):
+        self.crop_name = crop_name
+        self.version = "test"
+
+    def load(self):
+        pass
 
     def status(self):
         return {
             "available": True,
             "status": "available",
-            "name": "Hibiscus Test Model",
+            "name": "Crop Test Model",
             "version": "test",
             "message": "ready",
         }
@@ -31,16 +40,36 @@ class ReadyModel:
     def predict(self, image_bytes):
         assert image_bytes
         return {
-            "crop_name": "Hibiscus",
-            "disease_name": "Unhealthy",
-            "classification": "diseased",
-            "prediction_score": 0.84,
-            "top_predictions": [
-                {"label": "Unhealthy", "score": 0.84},
-                {"label": "Healthy", "score": 0.16},
-            ],
-            "model_name": "Hibiscus Test Model",
-            "model_version": "test",
+            "crop_name": self.crop_name,
+            "prediction_score": 0.97,
+        }
+
+
+class ReadyHealthModel:
+    available = True
+    version = "test"
+    supported_crops = SUPPORTED_CROPS
+
+    def load(self):
+        pass
+
+    def status(self):
+        return {
+            "available": True,
+            "status": "available",
+            "name": "Shared Health Test Model",
+            "version": "test",
+            "message": "ready",
+        }
+
+    def predict(self, image_bytes, crop_name):
+        assert image_bytes
+        assert crop_name in SUPPORTED_CROPS
+        return {
+            "health_status": "Unhealthy",
+            "health_confidence": 0.84,
+            "health_probabilities": {"Healthy": 0.16, "Unhealthy": 0.84},
+            "message": f"{crop_name} classified as Unhealthy.",
         }
 
 
@@ -54,10 +83,15 @@ class UnavailableModel:
         return {
             "available": False,
             "status": "not_configured",
-            "name": "Hibiscus Test Model",
+            "name": "Test Model",
             "version": None,
-            "message": "Hibiscus model is not configured.",
+            "message": "Test model is not configured.",
         }
+
+
+def install_ready_models(monkeypatch, crop_name="Hibiscus"):
+    monkeypatch.setattr(main, "crop_model", ReadyCropModel(crop_name))
+    monkeypatch.setattr(main, "health_model", ReadyHealthModel())
 
 
 @pytest.fixture
@@ -74,7 +108,8 @@ def client(tmp_path, monkeypatch):
         "store",
         DetectionStore(test_settings.database_path, test_settings.uploads_path),
     )
-    monkeypatch.setattr(main, "model", UnavailableModel())
+    monkeypatch.setattr(main, "crop_model", UnavailableModel())
+    monkeypatch.setattr(main, "health_model", UnavailableModel())
 
     with TestClient(main.app) as test_client:
         yield test_client
@@ -113,6 +148,63 @@ def test_empty_history_and_stats(client):
     assert len(stats["activity"]) == 14
 
 
+def test_existing_history_schema_migrates_without_losing_records(tmp_path):
+    database_path = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE detections (
+                id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                crop_name TEXT,
+                disease_name TEXT NOT NULL,
+                classification TEXT NOT NULL,
+                prediction_score REAL,
+                created_at TEXT NOT NULL,
+                latitude REAL,
+                longitude REAL,
+                model_name TEXT,
+                model_version TEXT,
+                top_predictions TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO detections (
+                id, filename, crop_name, disease_name, classification,
+                prediction_score, created_at, latitude, longitude,
+                model_name, model_version, top_predictions
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-record",
+                "legacy.png",
+                "Hibiscus",
+                "Healthy",
+                "healthy",
+                0.91,
+                "2026-01-01T10:00:00+00:00",
+                12.4,
+                76.2,
+                "Hibiscus Prototype",
+                "prototype",
+                "[]",
+            ),
+        )
+
+    store = DetectionStore(database_path, tmp_path / "uploads")
+    store.initialize()
+    result = store.get("legacy-record")
+
+    assert result["crop_name"] == "Hibiscus"
+    assert result["disease_name"] == "Healthy"
+    assert result["classification"] == "healthy"
+    assert result["latitude"] == 12.4
+    assert result["health_status"] is None
+    assert result["health_probabilities"] is None
+
+
 def test_missing_detection_returns_404(client):
     response = client.get("/api/detections/not-a-record")
     assert response.status_code == 404
@@ -120,7 +212,7 @@ def test_missing_detection_returns_404(client):
 
 
 def test_latest_uploaded_image_is_retrievable(client, monkeypatch):
-    monkeypatch.setattr(main, "model", ReadyModel())
+    install_ready_models(monkeypatch)
 
     uploaded_images = []
 
@@ -166,7 +258,20 @@ def test_predict_refuses_when_model_is_not_configured(client):
     )
 
     assert response.status_code == 503
-    assert response.json()["detail"] == "Hibiscus model is not configured."
+    assert "model is not configured" in response.json()["detail"]
+
+
+def test_predict_refuses_when_either_model_is_unavailable(client, monkeypatch):
+    monkeypatch.setattr(main, "crop_model", ReadyCropModel())
+    monkeypatch.setattr(main, "health_model", UnavailableModel())
+
+    response = client.post(
+        "/api/predict",
+        files={"file": ("leaf.png", make_image(), "image/png")},
+    )
+
+    assert response.status_code == 503
+    assert "Test model is not configured." in response.json()["detail"]
 
 
 def test_predict_requires_gps_coordinates_as_a_pair(client):
@@ -201,7 +306,7 @@ def test_invalid_image_is_rejected_before_model_check(client):
 def test_prediction_is_persisted_and_returned_with_location(
     client, monkeypatch
 ):
-    monkeypatch.setattr(main, "model", ReadyModel())
+    install_ready_models(monkeypatch)
 
     response = client.post(
         "/api/predict",
@@ -225,6 +330,13 @@ def test_prediction_is_persisted_and_returned_with_location(
 
     detection = response.json()
     assert detection["crop_name"] == "Hibiscus"
+    assert detection["crop_confidence"] == 0.97
+    assert detection["health_status"] == "Unhealthy"
+    assert detection["health_confidence"] == 0.84
+    assert detection["health_probabilities"] == {
+        "Healthy": 0.16,
+        "Unhealthy": 0.84,
+    }
     assert detection["classification"] == "diseased"
     assert detection["latitude"] == 12.4
     assert detection["gps_fix_valid"] is True
@@ -233,6 +345,13 @@ def test_prediction_is_persisted_and_returned_with_location(
         client.get(f"/api/detections/{detection['id']}").json()["id"]
         == detection["id"]
     )
+    saved_detection = client.get(
+        f"/api/detections/{detection['id']}"
+    ).json()
+    assert saved_detection["health_probabilities"] == {
+        "Healthy": 0.16,
+        "Unhealthy": 0.84,
+    }
 
     locations = client.get("/api/locations").json()
     assert locations["total"] == 1
@@ -250,7 +369,7 @@ def test_prediction_is_persisted_and_returned_with_location(
 def test_prediction_saves_coordinate_pair_without_gps_metadata(
     client, monkeypatch
 ):
-    monkeypatch.setattr(main, "model", ReadyModel())
+    install_ready_models(monkeypatch)
 
     response = client.post(
         "/api/predict",
@@ -281,7 +400,7 @@ def test_prediction_saves_coordinate_pair_without_gps_metadata(
 
 
 def test_predict_rejects_out_of_range_coordinates(client, monkeypatch):
-    monkeypatch.setattr(main, "model", ReadyModel())
+    install_ready_models(monkeypatch)
 
     response = client.post(
         "/api/predict",
@@ -301,29 +420,40 @@ def test_predict_rejects_out_of_range_coordinates(client, monkeypatch):
     assert response.status_code == 422
 
 
-def test_predict_accepts_hibiscus_selection(client, monkeypatch):
-    monkeypatch.setattr(main, "model", ReadyModel())
+def test_predict_classifies_all_supported_crops_and_lists_history(
+    client, monkeypatch
+):
+    detections = []
+    for crop in SUPPORTED_CROPS:
+        install_ready_models(monkeypatch, crop_name=crop)
+        response = client.post(
+            "/api/predict",
+            files={"file": (f"{crop}.png", make_image(), "image/png")},
+            data={"crop_name": crop},
+        )
 
-    response = client.post(
-        "/api/predict",
-        files={
-            "file": (
-                "hibiscus.png",
-                make_image(),
-                "image/png",
-            )
-        },
-        data={"crop_name": "Hibiscus"},
-    )
+        assert response.status_code == 201
+        detection = response.json()
+        assert detection["crop_name"] == crop
+        assert detection["health_status"] == "Unhealthy"
+        assert detection["crop_confidence"] == 0.97
+        assert detection["health_confidence"] == 0.84
+        assert detection["health_probabilities"] == {
+            "Healthy": 0.16,
+            "Unhealthy": 0.84,
+        }
+        detections.append(detection)
 
-    assert response.status_code == 201
-    detection = response.json()
-    assert detection["crop_name"] == "Hibiscus"
-    assert detection["latitude"] is None
-    assert detection["longitude"] is None
     history = client.get("/api/detections").json()
-    assert history["total"] == 1
-    assert history["items"][0]["id"] == detection["id"]
+    assert history["total"] == len(SUPPORTED_CROPS)
+    assert {row["crop_name"] for row in history["items"]} == set(SUPPORTED_CROPS)
+
+    hibiscus_history = client.get(
+        "/api/detections", params={"crop": "Hibiscus"}
+    ).json()
+    assert hibiscus_history["total"] == 1
+    assert hibiscus_history["items"][0]["crop_name"] == "Hibiscus"
+    assert client.get("/api/stats").json()["total_images"] == len(SUPPORTED_CROPS)
 
 
 def test_predict_rejects_unsupported_crop_selection(client):
@@ -336,11 +466,26 @@ def test_predict_rejects_unsupported_crop_selection(client):
                 "image/png",
             )
         },
-        data={"crop_name": "Tomato"},
+        data={"crop_name": "Unknown Crop"},
     )
 
     assert response.status_code == 422
     assert "Unsupported crop" in response.json()["detail"]
+
+
+def test_predict_rejects_manual_crop_that_conflicts_with_model(
+    client, monkeypatch
+):
+    install_ready_models(monkeypatch, crop_name="Apple")
+
+    response = client.post(
+        "/api/predict",
+        files={"file": ("leaf.png", make_image(), "image/png")},
+        data={"crop_name": "Tomato"},
+    )
+
+    assert response.status_code == 422
+    assert "does not match the detected crop Apple" in response.json()["detail"]
 
 
 def test_stale_gps_fix_is_not_associated_with_image(client):

@@ -17,6 +17,23 @@ const formatDate = (value) => value ? new Date(value).toLocaleString(undefined, 
 const score = (value) => Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '—'
 const displayModelName = (value) => typeof value === 'string' ? value.replace(/\bprototype\b/ig, '').replace(/\s{2,}/g, ' ').trim() : value
 
+function healthGuidance(record) {
+  const status = record?.health_status
+    || (record?.classification === 'healthy' ? 'Healthy' : record?.classification === 'diseased' ? 'Unhealthy' : null)
+  if (status === 'Healthy') return 'Continue routine crop care and monitor plants regularly.'
+  if (status === 'Unhealthy') return 'Inspect this plant and nearby leaves. This result does not identify a specific disease or prescribe treatment; consult local agricultural guidance before treating the crop.'
+  return null
+}
+
+function readStoredAnalysis() {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem('latestAnalysis') || 'null')
+    return stored?.crop_only ? null : stored
+  } catch {
+    return null
+  }
+}
+
 function imageValidationError(file) {
   if (!['image/jpeg', 'image/png'].includes(file.type)) return 'Choose a JPG, JPEG, or PNG image.'
   if (file.size > 10 * 1024 * 1024) return 'Image exceeds the 10 MB upload limit.'
@@ -76,8 +93,8 @@ function ActivityRows({ records }) {
   if (!records?.length) return <EmptyState title="No detections yet" />
   return <div className="activity-list">{records.map((row) => <Link key={row.id} to={`/history?id=${encodeURIComponent(row.id)}`} className="activity-item" style={{ textDecoration: 'none' }}>
     {row.image_url ? <img className="thumb" src={api.imageUrl(row.image_url)} alt="" /> : <div className="thumb" />}
-    <div className="activity-main"><div className="activity-name">{row.disease_name || 'Inconclusive result'}</div><div className="activity-meta">{row.crop_name || 'Crop unknown'} · {formatDate(row.created_at)}</div></div>
-    <span className={`badge ${row.classification === 'diseased' ? 'disease' : 'neutral'}`}>{row.classification || 'inconclusive'}</span>
+    <div className="activity-main"><div className="activity-name">{row.health_status || row.disease_name || 'Inconclusive result'}</div><div className="activity-meta">{row.crop_name || 'Crop unknown'} · {formatDate(row.created_at)}</div></div>
+    <span className={`badge ${row.classification === 'diseased' ? 'disease' : 'neutral'}`}>{row.health_status || row.classification || 'inconclusive'}</span>
   </Link>)}</div>
 }
 
@@ -131,7 +148,8 @@ export function MonitorPage() {
     const timer = scheduleMonitorRefresh(latest.refresh)
     return () => window.clearInterval(timer)
   }, [latest.refresh])
-  const record = result || latest.data
+  const latestRecord = result || latest.data
+  const record = latestRecord?.crop_only ? null : latestRecord
   const remoteImageUrl = record?.image_url ? api.imageUrl(record.image_url) : ''
   const onFile = (event) => {
     const selected = event.target.files?.[0]
@@ -203,20 +221,11 @@ export function MonitorPage() {
           </div>
           {record && <div className="card analysis-result live-monitor-result">
             <div className="card-heading"><div className="card-title">Latest Result</div></div>
-            {record.crop_only
-              ? <>
-                <div className="result-row"><span>{record.crop_mismatch ? 'Detected crop' : 'Identified crop'}</span><strong>{record.crop_name}</strong></div>
-                <div className="result-row"><span>Crop confidence</span><strong>{score(record.prediction_score)}</strong></div>
-                {record.crop_mismatch
-                  ? <p role="status">You selected {record.selected_crop}, but the image was identified as {record.crop_name}. No disease prediction was made.</p>
-                  : <p role="status">Disease and health classification is currently available only for Hibiscus. No disease prediction was made.</p>}
-              </>
-              : <>
-                <div className="result-row"><span>Identified crop</span><strong>{record.crop_name}</strong></div>
-                {Number.isFinite(record.crop_confidence) && <div className="result-row"><span>Crop confidence</span><strong>{score(record.crop_confidence)}</strong></div>}
-                <div className="result-row"><span>Prediction</span><strong>{record.disease_name || 'Inconclusive'}</strong></div>
-                <div className="result-row"><span>Score</span><strong>{score(record.prediction_score)}</strong></div>
-              </>}
+            <div className="result-row"><span>Identified crop</span><strong>{record.crop_name || 'Unknown'}</strong></div>
+            <div className="result-row"><span>Crop confidence</span><strong>{score(record.crop_confidence)}</strong></div>
+            <div className="result-row"><span>Health status</span><strong><span className={`badge ${record.classification === 'diseased' ? 'disease' : 'neutral'}`}>{record.health_status || (record.classification === 'healthy' ? 'Healthy' : record.classification === 'diseased' ? 'Unhealthy' : 'Unknown')}</span></strong></div>
+            <div className="result-row"><span>Health confidence</span><strong>{score(record.health_confidence ?? record.prediction_score)}</strong></div>
+            {record.message && <p role="status">{record.message}</p>}
             <button className="button" style={{ marginTop: 12 }} onClick={() => navigate('/analysis')}>View analysis <ArrowRight size={13} /></button>
           </div>}
         </div>
@@ -226,9 +235,7 @@ export function MonitorPage() {
 }
 
 export function AnalysisPage() {
-  const [latest, setLatest] = useState(() => {
-    try { return JSON.parse(sessionStorage.getItem('latestAnalysis') || 'null') } catch { return null }
-  })
+  const [latest, setLatest] = useState(readStoredAnalysis)
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState('')
   const [selectedCrop, setSelectedCrop] = useState('')
@@ -270,6 +277,7 @@ export function AnalysisPage() {
   const recommendationItems = recommendationValues
     .map((item) => typeof item === 'string' ? item : item?.recommendation || item?.text)
     .filter((item) => typeof item === 'string' && item.trim())
+  const guidance = healthGuidance(record)
   return <>
     <div className="analysis-page">
       <div className="analysis-page-heading"><h1 className="page-title">AI Analysis</h1></div>
@@ -306,47 +314,37 @@ export function AnalysisPage() {
             : !record
               ? <div className="analysis-result-empty">{error ? 'Analysis unavailable' : 'No result yet'}</div>
               : <>
-                {record.crop_only
-                  ? <>
-                    <div className="analysis-prediction">
-                      <span>{record.crop_mismatch ? 'Detected crop' : 'Identified crop'}</span>
-                      <strong>{record.crop_name}</strong>
-                    </div>
-                    {record.crop_mismatch
-                      ? <p role="status">You selected {record.selected_crop}, but the image was identified as {record.crop_name}. No disease prediction was made.</p>
-                      : <p role="status">Crop identification only. Disease and health classification is currently available only for Hibiscus; no disease prediction was made.</p>}
-                  </>
-                  : <>
-                    <div className="analysis-prediction">
-                      <span>Identified crop</span>
-                      <strong>{record.crop_name}</strong>
-                    </div>
-                    {Number.isFinite(record.crop_confidence) && <div className="analysis-confidence">
-                      <span>Crop confidence</span>
-                      <strong>{score(record.crop_confidence)}</strong>
-                    </div>}
-                    <div className="analysis-prediction">
-                      <span>Predicted disease class</span>
-                      <strong>{record.disease_name}</strong>
-                    </div>
-                  </>}
-                {Number.isFinite(record.prediction_score) && <div className="analysis-confidence">
-                  <span>{record.crop_only ? 'Crop identification confidence' : 'Disease classification confidence'}</span>
-                  <strong>{score(record.prediction_score)}</strong>
+                <div className="analysis-prediction">
+                  <span>Identified crop</span>
+                  <strong>{record.crop_name || 'Unknown'}</strong>
+                </div>
+                {Number.isFinite(record.crop_confidence) && <div className="analysis-confidence">
+                  <span>Crop confidence</span>
+                  <strong>{score(record.crop_confidence)}</strong>
                 </div>}
+                <div className="analysis-prediction">
+                  <span>Health status</span>
+                  <strong><span className={`badge ${record.classification === 'diseased' ? 'disease' : 'neutral'}`}>{record.health_status || (record.classification === 'healthy' ? 'Healthy' : record.classification === 'diseased' ? 'Unhealthy' : 'Unknown')}</span></strong>
+                </div>
+                {Number.isFinite(record.health_confidence ?? record.prediction_score) && <div className="analysis-confidence">
+                  <span>Health confidence</span>
+                  <strong>{score(record.health_confidence ?? record.prediction_score)}</strong>
+                </div>}
+                {record.message && <p role="status">{record.message}</p>}
                 {record.top_predictions?.length > 1 && <div className="analysis-alternatives">
-                  {record.top_predictions.slice(1, 10).map((item) => <div className="analysis-alternative" key={item.label}>
+                  {record.top_predictions.map((item) => <div className="analysis-alternative" key={item.label}>
                     <span>{item.label}</span><strong>{score(item.score)}</strong>
                   </div>)}
                 </div>}
-                {!record.crop_only && recommendationItems.length > 0 && <div className="analysis-recommendations">
+                {(recommendationItems.length > 0 || guidance) && <div className="analysis-recommendations">
                   <div className="card-title">Recommendations</div>
                   {recommendationItems.map((item, index) => <p key={`${index}-${item}`}>{item}</p>)}
+                  {guidance && <p>{guidance}</p>}
                 </div>}
-                {!record.crop_only && <div className="analysis-result-links">
+                <div className="analysis-result-links">
                   <Link className="button" to={record.id ? `/history?id=${encodeURIComponent(record.id)}` : '/history'}>View history</Link>
                   <Link className="button ghost" to="/recommendations">Guidance</Link>
-                </div>}
+                </div>
               </>}
         </section>
       </div>
@@ -504,7 +502,7 @@ export function HistoryPage() {
                     : <div className="history-thumb history-thumb-empty" aria-hidden="true" />}
                   <div className="history-record-main">
                     <div className="history-disease">{row.disease_name}</div>
-                    <div className="history-meta">{row.crop_name || 'Unknown crop'} · {row.classification}</div>
+                    <div className="history-meta">{row.crop_name || 'Unknown crop'} · {row.health_status || row.classification}</div>
                   </div>
                 </div>
                 <div className="history-field"><span className="history-mobile-label">Confidence</span>{score(row.prediction_score)}</div>
@@ -524,15 +522,13 @@ export function HistoryPage() {
           </div>
         </div>
       </section>
-      {detail && <div className="modal-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) closeDetail() }}><section className="modal" role="dialog" aria-modal="true" aria-label="Detection details"><div className="modal-header"><div><div className="card-title">Detection details</div></div><button className="button" onClick={closeDetail}>Close</button></div>{detail.image_url && <img src={api.imageUrl(detail.image_url)} alt="Detected crop" style={{ maxWidth: '100%', maxHeight: 250, display: 'block', marginBottom: 14, borderRadius: 8 }} />}{[['Crop', detail.crop_name], ['Disease', detail.disease_name], ['Classification', detail.classification], ['Model score', score(detail.prediction_score)], ['Date', formatDate(detail.created_at)], ['Model name', displayModelName(detail.model_name)]].map(([label, value]) => <div className="result-row" key={label}><span>{label}</span><strong>{value || '—'}</strong></div>)}</section></div>}
+      {detail && <div className="modal-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) closeDetail() }}><section className="modal" role="dialog" aria-modal="true" aria-label="Detection details"><div className="modal-header"><div><div className="card-title">Detection details</div></div><button className="button" onClick={closeDetail}>Close</button></div>{detail.image_url && <img src={api.imageUrl(detail.image_url)} alt="Detected crop" style={{ maxWidth: '100%', maxHeight: 250, display: 'block', marginBottom: 14, borderRadius: 8 }} />}{[['Crop', detail.crop_name], ['Crop confidence', score(detail.crop_confidence)], ['Health status', detail.health_status || detail.disease_name], ['Health confidence', score(detail.health_confidence ?? detail.prediction_score)], ['Date', formatDate(detail.created_at)], ['Model name', displayModelName(detail.model_name)]].map(([label, value]) => <div className="result-row" key={label}><span>{label}</span><strong>{value || '—'}</strong></div>)}</section></div>}
     </div>
   </>
 }
 
 export function RecommendationsPage() {
-  const [latest] = useState(() => {
-    try { return JSON.parse(sessionStorage.getItem('latestAnalysis') || 'null') } catch { return null }
-  })
+  const [latest] = useState(readStoredAnalysis)
   const record = latest?.detection || latest
   const recommendations = record?.treatment_recommendations ?? record?.recommendations
   const recommendationValues = Array.isArray(recommendations)
@@ -545,6 +541,10 @@ export function RecommendationsPage() {
       ? { title: '', content: item }
       : { title: item?.title || '', content: item?.recommendation || item?.text || '' })
     .filter((item) => typeof item.content === 'string' && item.content.trim())
+  const guidance = healthGuidance(record)
+  if (!recommendationItems.length && guidance) {
+    recommendationItems.push({ title: '', content: guidance })
+  }
   return <>
     <div className="recommendations-page">
       <div className="recommendations-heading">

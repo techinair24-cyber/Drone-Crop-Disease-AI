@@ -1,5 +1,7 @@
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,11 @@ class DetectionStore:
                     id TEXT PRIMARY KEY,
                     filename TEXT NOT NULL,
                     crop_name TEXT,
+                    crop_confidence REAL,
+                    health_status TEXT,
+                    health_confidence REAL,
+                    health_probabilities TEXT,
+                    message TEXT,
                     disease_name TEXT NOT NULL,
                     classification TEXT NOT NULL,
                     prediction_score REAL,
@@ -37,6 +44,11 @@ class DetectionStore:
             )
             columns = {row["name"] for row in connection.execute("PRAGMA table_info(detections)")}
             for column, definition in (
+                ("crop_confidence", "REAL"),
+                ("health_status", "TEXT"),
+                ("health_confidence", "REAL"),
+                ("health_probabilities", "TEXT"),
+                ("message", "TEXT"),
                 ("gps_fix_valid", "INTEGER"),
                 ("gps_timestamp", "TEXT"),
                 ("captured_at", "TEXT"),
@@ -46,24 +58,39 @@ class DetectionStore:
             connection.execute("CREATE INDEX IF NOT EXISTS idx_detections_created_at ON detections(created_at)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_detections_crop ON detections(crop_name)")
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.database_path, timeout=10)
         connection.row_factory = sqlite3.Row
-        return connection
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def create(self, record: dict[str, Any]) -> dict[str, Any]:
         stored = {**record, "created_at": datetime.now(timezone.utc).isoformat()}
         with self._connect() as connection:
             connection.execute(
                 """INSERT INTO detections
-                (id, filename, crop_name, disease_name, classification, prediction_score,
+                (id, filename, crop_name, crop_confidence, health_status, health_confidence,
+                 health_probabilities, message, disease_name, classification, prediction_score,
                  created_at, latitude, longitude, gps_fix_valid, gps_timestamp, captured_at,
                  model_name, model_version, top_predictions)
-                VALUES (:id, :filename, :crop_name, :disease_name, :classification, :prediction_score,
+                VALUES (:id, :filename, :crop_name, :crop_confidence, :health_status, :health_confidence,
+                 :health_probabilities, :message, :disease_name, :classification, :prediction_score,
                  :created_at, :latitude, :longitude, :gps_fix_valid, :gps_timestamp, :captured_at,
                  :model_name, :model_version, :top_predictions)""",
                 {
                     **stored,
+                    "health_probabilities": (
+                        json.dumps(record["health_probabilities"])
+                        if record.get("health_probabilities") is not None
+                        else None
+                    ),
                     "top_predictions": json.dumps(record.get("top_predictions", [])),
                 },
             )
@@ -171,10 +198,18 @@ class DetectionStore:
         top_predictions = row.get("top_predictions", "[]")
         if isinstance(top_predictions, str):
             top_predictions = json.loads(top_predictions)
+        health_probabilities = row.get("health_probabilities")
+        if isinstance(health_probabilities, str):
+            health_probabilities = json.loads(health_probabilities)
         return {
             "id": row["id"],
             "image_url": f"/api/images/{row['filename']}",
             "crop_name": row["crop_name"],
+            "crop_confidence": row.get("crop_confidence"),
+            "health_status": row.get("health_status"),
+            "health_confidence": row.get("health_confidence"),
+            "health_probabilities": health_probabilities,
+            "message": row.get("message"),
             "disease_name": row["disease_name"],
             "classification": row["classification"],
             "prediction_score": row["prediction_score"],

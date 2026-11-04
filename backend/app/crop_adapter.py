@@ -2,12 +2,26 @@ import json
 import logging
 from io import BytesIO
 from pathlib import Path
+from threading import Lock
 
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 from ai_edge_litert.interpreter import Interpreter
 
 logger = logging.getLogger(__name__)
+
+SUPPORTED_CROPS = (
+    "Apple",
+    "Chilli",
+    "Grape",
+    "Hibiscus",
+    "Maize",
+    "Peach",
+    "Potato",
+    "Strawberry",
+    "Tomato",
+    "Wheat",
+)
 
 
 class CropModel:
@@ -20,6 +34,7 @@ class CropModel:
         self.classes = []
         self.version = "1.0"
         self.load_error = None
+        self._inference_lock = Lock()
 
     @property
     def available(self):
@@ -35,18 +50,32 @@ class CropModel:
                 self.info_path.read_text(encoding="utf-8")
             )
 
-            if not isinstance(classes, list) or len(classes) != 10:
-                raise ValueError("Expected exactly 10 crop classes.")
+            if classes != list(SUPPORTED_CROPS):
+                raise ValueError("Unexpected crop model class order.")
 
             interpreter = Interpreter(
                 model_path=str(self.model_path),
                 num_threads=2
             )
             interpreter.allocate_tensors()
+            input_details = interpreter.get_input_details()
+            output_details = interpreter.get_output_details()
+            if (
+                len(input_details) != 1
+                or tuple(input_details[0]["shape"]) != (1, 160, 160, 3)
+                or input_details[0]["dtype"] != np.float32
+            ):
+                raise ValueError("Unsupported crop model input tensor.")
+            if (
+                len(output_details) != 1
+                or tuple(output_details[0]["shape"]) != (1, len(classes))
+                or output_details[0]["dtype"] != np.float32
+            ):
+                raise ValueError("Unsupported crop model output tensor.")
 
             self.interpreter = interpreter
-            self.input_details = interpreter.get_input_details()
-            self.output_details = interpreter.get_output_details()
+            self.input_details = input_details
+            self.output_details = output_details
             self.classes = classes
 
             logger.info("10-crop TensorFlow Lite model loaded.")
@@ -91,10 +120,17 @@ class CropModel:
         input_index = self.input_details[0]["index"]
         output_index = self.output_details[0]["index"]
 
-        self.interpreter.set_tensor(input_index, image_array)
-        self.interpreter.invoke()
+        with self._inference_lock:
+            self.interpreter.set_tensor(input_index, image_array)
+            self.interpreter.invoke()
+            probabilities = self.interpreter.get_tensor(output_index)[0]
 
-        probabilities = self.interpreter.get_tensor(output_index)[0]
+        if (
+            not np.all(np.isfinite(probabilities))
+            or np.any(probabilities < 0.0)
+            or np.any(probabilities > 1.0)
+        ):
+            raise RuntimeError("Crop model returned invalid probabilities.")
 
         index = int(np.argmax(probabilities))
         confidence = float(probabilities[index])

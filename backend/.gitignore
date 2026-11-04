@@ -12,6 +12,8 @@ uploads/
 *.safetensors
 *.onnx
 models/*
+!models/health_classifier.tflite
+!models/health_model_info.json
 !models/plantvillage-mobilenetv2/
 !models/plantvillage-mobilenetv2/**
 models/plantvillage-mobilenetv2/.cache/

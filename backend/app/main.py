@@ -16,8 +16,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from PIL import Image, UnidentifiedImageError
 
 from .config import get_settings
-from .hibiscus_adapter import HibiscusModel
-from .crop_adapter import CropModel
+from .crop_adapter import CropModel, SUPPORTED_CROPS
+from .health_adapter import HealthModel
 from .schemas import (
     Detection,
     DetectionPage,
@@ -36,19 +36,11 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 store = DetectionStore(settings.database_path, settings.uploads_path)
 
-# Only the Hibiscus MobileNetV2 prototype is used.
-hibiscus_model_path = (
-    Path(__file__).resolve().parents[1]
-    / "training"
-    / "hibiscus_model.pth"
-)
-model = HibiscusModel(hibiscus_model_path)
-crop_model_path = (
-    Path(__file__).resolve().parents[1]
-    / "models"
-    / "crop_classifier.tflite"
-)
+models_path = Path(__file__).resolve().parents[1] / "models"
+crop_model_path = models_path / "crop_classifier.tflite"
 crop_model = CropModel(crop_model_path)
+health_model_path = models_path / "health_classifier.tflite"
+health_model = HealthModel(health_model_path)
 
 if not settings.cors_origins:
     raise ValueError("CORS_ORIGINS must contain at least one allowed origin.")
@@ -69,15 +61,15 @@ if settings.gps_max_skew_seconds < 0:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     store.initialize()
-    model.load()
     crop_model.load()
+    health_model.load()
     yield
 
 
 app = FastAPI(
     title="Leaf Disease Detection API",
     version="1.1.0",
-    description="Hibiscus leaf health classification API.",
+    description="10-crop leaf identification and health classification API.",
     lifespan=lifespan,
 )
 
@@ -119,7 +111,7 @@ async def log_requests(request: Request, call_next):
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> dict:
-    model_status = model.status()
+    model_status = _analysis_model_status()
     return {
         "status": "ok" if model_status["available"] else "degraded",
         "backend": "available",
@@ -132,8 +124,39 @@ def system_status() -> dict:
     return {
         "camera": {"available": False, "status": "unavailable"},
         "gps": {"available": False, "status": "unavailable"},
-        "model": model.status(),
+        "model": _analysis_model_status(),
         "telemetry": {"available": False, "status": "unavailable"},
+    }
+
+
+def _analysis_model_status() -> dict:
+    crop_status = crop_model.status()
+    health_status = health_model.status()
+    available = crop_status["available"] and health_status["available"]
+    if available:
+        status = "available"
+        message = "Crop identification and health classification models loaded."
+    else:
+        component_statuses = (crop_status["status"], health_status["status"])
+        status = (
+            "error" if "error" in component_statuses else "not_configured"
+        )
+        message = "; ".join(
+            component["message"]
+            for component in (crop_status, health_status)
+            if not component["available"]
+        )
+
+    return {
+        "available": available,
+        "status": status,
+        "name": "10-Crop Identification + Shared Health Classifier",
+        "version": (
+            f"crop-{crop_status['version']}; health-{health_status['version']}"
+            if available
+            else None
+        ),
+        "message": message,
     }
 
 
@@ -159,10 +182,12 @@ def _filters(
             detail="Filter values must be 100 characters or fewer.",
         )
 
-    if crop is not None and crop.casefold() != "hibiscus":
+    if crop is not None and crop.casefold() not in {
+        name.casefold() for name in SUPPORTED_CROPS
+    }:
         raise HTTPException(
             status_code=422,
-            detail="Unsupported crop. Only Hibiscus is supported.",
+            detail="Unsupported crop.",
         )
 
 
@@ -178,11 +203,10 @@ def list_detections(
 ) -> dict:
     _filters(crop, disease, search, from_date, to_date)
 
-    # Existing records are preserved. This view returns Hibiscus only.
     return store.list(
         page,
         page_size,
-        "Hibiscus",
+        crop,
         disease,
         search,
         from_date,
@@ -194,7 +218,7 @@ def list_detections(
 def get_detection(detection_id: str) -> dict:
     detection = store.get(detection_id)
 
-    if detection is None or detection["crop_name"] != "Hibiscus":
+    if detection is None:
         raise HTTPException(
             status_code=404,
             detail="Detection record not found.",
@@ -217,7 +241,7 @@ def list_locations(
     return store.list(
         page,
         page_size,
-        "Hibiscus",
+        crop,
         disease,
         None,
         from_date,
@@ -228,75 +252,7 @@ def list_locations(
 
 @app.get("/api/stats", response_model=StatsResponse)
 def stats() -> dict:
-    # Keep the original database intact, but report Hibiscus records only.
-    detections = store.list(
-        page=1,
-        page_size=100000,
-        crop="Hibiscus",
-    )["items"]
-
-    total = len(detections)
-    healthy = sum(item["classification"] == "healthy" for item in detections)
-    diseased = sum(item["classification"] == "diseased" for item in detections)
-    inconclusive = sum(
-        item["classification"] == "inconclusive" for item in detections
-    )
-    geolocated = sum(
-        item["latitude"] is not None and item["longitude"] is not None
-        for item in detections
-    )
-
-    disease_counts = {}
-    activity_counts = {}
-
-    for item in detections:
-        if item["classification"] == "diseased":
-            name = item["disease_name"]
-            disease_counts[name] = disease_counts.get(name, 0) + 1
-
-        day = item["created_at"][:10]
-        activity_counts[day] = activity_counts.get(day, 0) + 1
-
-    start = (datetime.now(timezone.utc) - __import__("datetime").timedelta(days=13)).date()
-
-    activity = [
-        {
-            "date": (start + __import__("datetime").timedelta(days=offset)).strftime("%b %d"),
-            "count": activity_counts.get(
-                (start + __import__("datetime").timedelta(days=offset)).isoformat(),
-                0,
-            ),
-        }
-        for offset in range(14)
-    ]
-
-    return {
-        "total_images": total,
-        "diseased_images": diseased,
-        "healthy_images": healthy,
-        "inconclusive_images": inconclusive,
-        "geolocated_images": geolocated,
-        "crop_distribution": (
-            [
-                {
-                    "crop_name": "Hibiscus",
-                    "count": total,
-                    "percentage": 100.0,
-                }
-            ]
-            if total
-            else []
-        ),
-        "disease_distribution": [
-            {
-                "crop_name": "Hibiscus",
-                "disease_name": name,
-                "count": count,
-            }
-            for name, count in disease_counts.items()
-        ],
-        "activity": activity,
-    }
+    return store.stats()
 
 
 @app.post("/api/crop-predict")
@@ -346,17 +302,19 @@ async def predict_crop(file: Annotated[UploadFile, File()]):
 @app.post("/api/predict", response_model=Detection, status_code=201)
 async def predict(
     file: Annotated[UploadFile, File()],
-    crop_name: Annotated[str | None, Form()] = "Hibiscus",
+    crop_name: Annotated[str | None, Form()] = None,
     latitude: Annotated[float | None, Form(ge=-90, le=90)] = None,
     longitude: Annotated[float | None, Form(ge=-180, le=180)] = None,
     gps_fix_valid: bool | None = Form(default=None),
     gps_timestamp: datetime | None = Form(default=None),
     captured_at: datetime | None = Form(default=None),
 ) -> dict:
-    if crop_name is not None and crop_name.casefold() != "hibiscus":
+    if crop_name is not None and crop_name.casefold() not in {
+        name.casefold() for name in SUPPORTED_CROPS
+    }:
         raise HTTPException(
             status_code=422,
-            detail="Unsupported crop. Only Hibiscus is supported.",
+            detail="Unsupported crop.",
         )
 
     if (latitude is None) != (longitude is None):
@@ -422,21 +380,33 @@ async def predict(
             detail="Only JPG, JPEG, and PNG images are supported.",
         )
 
-    if not model.available:
+    if not crop_model.available or not health_model.available:
         raise HTTPException(
             status_code=503,
-            detail=model.status()["message"],
+            detail=_analysis_model_status()["message"],
         )
 
     try:
-        result = model.predict(image_bytes)
+        crop_result = crop_model.predict(image_bytes)
+        detected_crop = crop_result["crop_name"]
+        if crop_name is not None and detected_crop.casefold() != crop_name.casefold():
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Selected crop {crop_name} does not match the detected "
+                    f"crop {detected_crop}."
+                ),
+            )
+        result = health_model.predict(image_bytes, detected_crop)
+    except HTTPException:
+        raise
     except ValueError as exc:
-        raise HTTPException(status_code=415, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("Hibiscus inference failed.")
+        logger.exception("Crop and health inference failed.")
         raise HTTPException(
             status_code=500,
-            detail="Hibiscus inference failed.",
+            detail="Crop and health inference failed.",
         ) from exc
 
     extension = ".jpg" if image_format == "JPEG" else ".png"
@@ -449,10 +419,19 @@ async def predict(
         record = store.create({
             "id": str(uuid.uuid4()),
             "filename": filename,
-            "crop_name": "Hibiscus",
-            "disease_name": result["disease_name"],
-            "classification": result["classification"],
-            "prediction_score": result["prediction_score"],
+            "crop_name": detected_crop,
+            "crop_confidence": crop_result["prediction_score"],
+            "health_status": result["health_status"],
+            "health_confidence": result["health_confidence"],
+            "health_probabilities": result["health_probabilities"],
+            "message": result["message"],
+            "disease_name": result["health_status"],
+            "classification": (
+                "healthy"
+                if result["health_status"] == "Healthy"
+                else "diseased"
+            ),
+            "prediction_score": result["health_confidence"],
             "latitude": latitude,
             "longitude": longitude,
             "gps_fix_valid": gps_fix_valid if latitude is not None else None,
@@ -464,21 +443,29 @@ async def predict(
                 captured_at.astimezone(timezone.utc).isoformat()
                 if captured_at else None
             ),
-            "model_name": result["model_name"],
-            "model_version": result["model_version"],
-            "top_predictions": result["top_predictions"],
+            "model_name": (
+                "10-Crop MobileNetV2 Lite + Shared Health LiteRT"
+            ),
+            "model_version": (
+                f"crop-{crop_model.version}; health-{health_model.version}"
+            ),
+            "top_predictions": [
+                {"label": name, "score": confidence}
+                for name, confidence in result["health_probabilities"].items()
+            ],
         })
 
     except (OSError, sqlite3.Error):
         image_path.unlink(missing_ok=True)
-        logger.exception("Could not persist a Hibiscus inference result.")
+        logger.exception("Could not persist a crop health inference result.")
         raise HTTPException(
             status_code=500,
             detail="The inference result could not be saved.",
         ) from None
 
     logger.info(
-        "hibiscus_detection_saved id=%s classification=%s",
+        "crop_health_detection_saved crop=%s id=%s classification=%s",
+        record["crop_name"],
         record["id"],
         record["classification"],
     )

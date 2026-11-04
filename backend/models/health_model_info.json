@@ -1,0 +1,24 @@
+{
+    "classes": [
+        "Healthy",
+        "Unhealthy"
+    ],
+    "supported_crops": [
+        "Apple",
+        "Chilli",
+        "Grape",
+        "Hibiscus",
+        "Maize",
+        "Peach",
+        "Potato",
+        "Strawberry",
+        "Tomato",
+        "Wheat"
+    ],
+    "output": "probability_of_Unhealthy",
+    "input_size": [
+        160,
+        160
+    ],
+    "preprocessing": "mobilenet_v2"
+}

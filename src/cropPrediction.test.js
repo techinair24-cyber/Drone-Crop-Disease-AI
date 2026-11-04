@@ -6,89 +6,88 @@ import { SUPPORTED_CROPS } from './supportedCrops.js'
 const file = { name: 'leaf.jpg' }
 const location = { latitude: 12, longitude: 34 }
 
-function createApi(detectedCrop) {
+function createApi(cropName, healthStatus = 'Healthy') {
   const calls = []
   return {
     calls,
-    cropPredict: async (image) => {
-      calls.push(['cropPredict', image])
-      return {
-        crop_name: detectedCrop,
-        prediction_score: 0.91,
-        top_predictions: [{ label: detectedCrop, score: 0.91 }],
-      }
-    },
     predict: async (...args) => {
-      calls.push(['predict', ...args])
+      calls.push(args)
+      const healthProbabilities = {
+        Healthy: healthStatus === 'Healthy' ? 0.8 : 0.2,
+        Unhealthy: healthStatus === 'Unhealthy' ? 0.8 : 0.2,
+      }
       return {
-        crop_name: 'Hibiscus',
-        disease_name: 'Healthy',
-        prediction_score: 0.88,
-        top_predictions: [{ label: 'Healthy', score: 0.88 }],
+        id: 'prediction-id',
+        crop_name: cropName,
+        crop_confidence: 0.95,
+        health_status: healthStatus,
+        health_confidence: 0.8,
+        health_probabilities: healthProbabilities,
+        message: `${cropName} classified as ${healthStatus}.`,
+        classification: healthStatus === 'Healthy' ? 'healthy' : 'diseased',
+        prediction_score: 0.8,
+        top_predictions: Object.entries(healthProbabilities).map(
+          ([label, score]) => ({ label, score })
+        ),
       }
     },
   }
 }
 
-test('validates each manual crop against crop detection before disease prediction', async () => {
+test('sends each manually selected crop through full prediction', async () => {
   for (const crop of SUPPORTED_CROPS) {
-    const api = createApi(crop)
+    const api = createApi(crop, 'Unhealthy')
     const result = await predictCrop(api, file, crop, location)
 
+    assert.deepEqual(api.calls, [[file, crop, location]])
     assert.equal(result.crop_name, crop)
-    assert.equal(result.crop_confidence, 0.91)
-    assert.equal(api.calls[0][0], 'cropPredict')
-
-    if (crop === 'Hibiscus') {
-      assert.equal(result.disease_name, 'Healthy')
-      assert.deepEqual(api.calls[1], ['predict', file, 'Hibiscus', location])
-    } else {
-      assert.equal(result.crop_only, true)
-      assert.equal(api.calls.length, 1)
-    }
+    assert.equal(result.health_status, 'Unhealthy')
+    assert.equal(result.crop_confidence, 0.95)
+    assert.equal(result.health_confidence, 0.8)
   }
 })
 
-test('automatic detection uses crop detection for all supported crops', async () => {
+test('sends automatic selection through full crop and health prediction', async () => {
   for (const crop of SUPPORTED_CROPS) {
     const api = createApi(crop)
     const result = await predictCrop(api, file, '', location)
 
+    assert.deepEqual(api.calls, [[file, '', location]])
     assert.equal(result.crop_name, crop)
-    assert.equal(result.crop_confidence, 0.91)
-    assert.equal(api.calls[0][0], 'cropPredict')
-
-    if (crop === 'Hibiscus') {
-      assert.equal(result.disease_name, 'Healthy')
-      assert.equal(api.calls.length, 2)
-    } else {
-      assert.equal(result.crop_only, true)
-      assert.equal(api.calls.length, 1)
-    }
+    assert.ok(['Healthy', 'Unhealthy'].includes(result.health_status))
   }
 })
 
-test('reports manual crop mismatches without calling the Hibiscus disease endpoint', async () => {
-  for (let index = 0; index < SUPPORTED_CROPS.length; index += 1) {
-    const selectedCrop = SUPPORTED_CROPS[index]
-    const detectedCrop = SUPPORTED_CROPS[(index + 1) % SUPPORTED_CROPS.length]
-    const api = createApi(detectedCrop)
-    const result = await predictCrop(api, file, selectedCrop, location)
+test('rejects invalid manual selection before requesting prediction', async () => {
+  const api = createApi('Apple')
 
-    assert.equal(result.crop_only, true)
-    assert.equal(result.crop_mismatch, true)
-    assert.equal(result.selected_crop, selectedCrop)
-    assert.equal(result.crop_name, detectedCrop)
-    assert.equal(api.calls.length, 1)
-    assert.equal(api.calls[0][0], 'cropPredict')
-  }
-})
-
-test('rejects unsupported crop detection output', async () => {
-  const api = createApi('Unknown crop')
   await assert.rejects(
-    predictCrop(api, file, '', location),
-    /Crop detection returned an unsupported crop/
+    predictCrop(api, file, 'Unknown Crop', location),
+    /selected crop is not supported/
   )
-  assert.equal(api.calls.length, 1)
+  assert.equal(api.calls.length, 0)
+})
+
+test('rejects incomplete or invalid health results instead of showing crop-only success', async () => {
+  const incompleteApi = {
+    predict: async () => ({ crop_name: 'Apple', crop_confidence: 0.9 }),
+  }
+  await assert.rejects(
+    predictCrop(incompleteApi, file, '', location),
+    /valid health classification/
+  )
+
+  const invalidConfidenceApi = {
+    predict: async () => ({
+      crop_name: 'Apple',
+      crop_confidence: 0.9,
+      health_status: 'Healthy',
+      health_confidence: 1.2,
+      health_probabilities: { Healthy: 1.2, Unhealthy: -0.2 },
+    }),
+  }
+  await assert.rejects(
+    predictCrop(invalidConfidenceApi, file, '', location),
+    /invalid confidence/
+  )
 })

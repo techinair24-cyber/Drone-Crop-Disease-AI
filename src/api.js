@@ -94,14 +94,31 @@ export async function exportDetections(params = {}) {
     page += 1
   } while (page <= totalPages)
   if (!all.length) throw new ApiError('There are no records to export.')
-  const columns = ['crop_name', 'disease_name', 'classification', 'prediction_score', 'created_at', 'model_name']
+  const columns = [
+    'crop_name',
+    'crop_confidence',
+    'disease_name',
+    'classification',
+    'prediction_score',
+    'health_status',
+    'health_confidence',
+    'healthy_probability',
+    'unhealthy_probability',
+    'created_at',
+    'model_name',
+  ]
   const escape = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`
   const csv = [
     columns.join(','),
     ...all.map((row) => columns.map((column) => {
-      const value = column === 'model_name'
-        ? String(row[column] ?? '').replace(/\bprototype\b/ig, '').replace(/\s{2,}/g, ' ').trim()
-        : row[column]
+      let value = row[column]
+      if (column === 'model_name') {
+        value = String(value ?? '').replace(/\bprototype\b/ig, '').replace(/\s{2,}/g, ' ').trim()
+      } else if (column === 'healthy_probability') {
+        value = row.health_probabilities?.Healthy
+      } else if (column === 'unhealthy_probability') {
+        value = row.health_probabilities?.Unhealthy
+      }
       return escape(value)
     }).join(',')),
   ].join('\r\n')
