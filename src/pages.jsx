@@ -22,6 +22,19 @@ function imageValidationError(file) {
   return null
 }
 
+async function predictCrop(file, selectedCrop, location) {
+  if (selectedCrop) return api.predict(file, selectedCrop, location)
+
+  const cropResult = await api.cropPredict(file)
+  if (!SUPPORTED_CROPS.includes(cropResult.crop_name)) {
+    throw new Error('Automatic crop detection returned an unsupported crop.')
+  }
+  if (cropResult.crop_name !== 'Hibiscus') {
+    return { ...cropResult, crop_only: true }
+  }
+  return api.predict(file, cropResult.crop_name, location)
+}
+
 function ErrorNotice({ error, onRetry, compact = false }) {
   if (!error) return null
   return <div className={`notice warning${compact ? ' compact-notice' : ''}`} role="alert"><AlertCircle size={16} /><span>{error.message || 'Unable to load data.'}</span>{onRetry && <button className="button" onClick={onRetry}><RefreshCw size={13} />Retry</button>}</div>
@@ -130,7 +143,7 @@ export function MonitorPage() {
     const timer = scheduleMonitorRefresh(latest.refresh)
     return () => window.clearInterval(timer)
   }, [latest.refresh])
-  const record = latest.data || result
+  const record = result || latest.data
   const remoteImageUrl = record?.image_url ? api.imageUrl(record.image_url) : ''
   const onFile = (event) => {
     const selected = event.target.files?.[0]
@@ -151,7 +164,7 @@ export function MonitorPage() {
     try {
       const location = await getCurrentLocation()
       setLocationMessage(location.message)
-      const response = await api.predict(file, selectedCrop, location.coordinates)
+      const response = await predictCrop(file, selectedCrop, location.coordinates)
       setResult(response)
       sessionStorage.setItem('latestAnalysis', JSON.stringify(response))
     } catch (cause) { setError(cause) } finally { setBusy(false) }
@@ -183,7 +196,7 @@ export function MonitorPage() {
             <input className="hidden-input" id="crop-upload" type="file" accept="image/jpeg,image/png" onChange={onFile} />
             <label className="button" htmlFor="crop-upload"><Upload size={14} />Upload image</label>
             <select className="select" aria-label="Crop type" value={selectedCrop} onChange={(event) => setSelectedCrop(event.target.value)} disabled={busy}>
-              <option value="">Automatic crop</option>
+              <option value="">Automatic Crop Detection</option>
               {SUPPORTED_CROPS.map((crop) => <option key={crop} value={crop}>{crop}</option>)}
             </select>
             <button className="button primary" disabled={!file || busy} onClick={analyze}>{busy ? <RefreshCw size={14} className="spin" /> : <Crosshair size={14} />}{busy ? 'Analyzing…' : 'Analyze image'}</button>
@@ -202,8 +215,16 @@ export function MonitorPage() {
           </div>
           {record && <div className="card analysis-result live-monitor-result">
             <div className="card-heading"><div className="card-title">Latest Result</div></div>
-            <div className="result-row"><span>Prediction</span><strong>{record.disease_name || 'Inconclusive'}</strong></div>
-            <div className="result-row"><span>Score</span><strong>{score(record.prediction_score)}</strong></div>
+            {record.crop_only
+              ? <>
+                <div className="result-row"><span>Identified crop</span><strong>{record.crop_name}</strong></div>
+                <div className="result-row"><span>Crop confidence</span><strong>{score(record.prediction_score)}</strong></div>
+                <p role="status">Disease and health classification is currently available only for Hibiscus. No disease prediction was made.</p>
+              </>
+              : <>
+                <div className="result-row"><span>Prediction</span><strong>{record.disease_name || 'Inconclusive'}</strong></div>
+                <div className="result-row"><span>Score</span><strong>{score(record.prediction_score)}</strong></div>
+              </>}
             <button className="button" style={{ marginTop: 12 }} onClick={() => navigate('/analysis')}>View analysis <ArrowRight size={13} /></button>
           </div>}
         </div>
@@ -243,7 +264,7 @@ export function AnalysisPage() {
     try {
       const location = await getCurrentLocation()
       setLocationMessage(location.message)
-      const response = await api.predict(file, selectedCrop, location.coordinates)
+      const response = await predictCrop(file, selectedCrop, location.coordinates)
       setLatest(response)
       sessionStorage.setItem('latestAnalysis', JSON.stringify(response))
     } catch (cause) { setError(cause) } finally { setBusy(false) }
@@ -274,7 +295,7 @@ export function AnalysisPage() {
             <input className="hidden-input" id="analysis-upload" type="file" accept="image/jpeg,image/png" onChange={onFile} />
             <label className="button" htmlFor="analysis-upload"><Upload size={14} />Upload image</label>
             <select className="select" aria-label="Crop type" value={selectedCrop} onChange={(event) => setSelectedCrop(event.target.value)} disabled={busy}>
-              <option value="">Automatic crop</option>
+              <option value="">Automatic Crop Detection</option>
               {SUPPORTED_CROPS.map((crop) => <option key={crop} value={crop}>{crop}</option>)}
             </select>
             <button className="button primary" disabled={!file || busy} onClick={analyze}>
@@ -293,12 +314,20 @@ export function AnalysisPage() {
             : !record
               ? <div className="analysis-result-empty">{error ? 'Analysis unavailable' : 'No result yet'}</div>
               : <>
-                <div className="analysis-prediction">
-                  <span>Predicted disease class</span>
-                  <strong>{record.disease_name}</strong>
-                </div>
+                {record.crop_only
+                  ? <>
+                    <div className="analysis-prediction">
+                      <span>Identified crop</span>
+                      <strong>{record.crop_name}</strong>
+                    </div>
+                    <p role="status">Crop identification only. Disease and health classification is currently available only for Hibiscus; no disease prediction was made.</p>
+                  </>
+                  : <div className="analysis-prediction">
+                    <span>Predicted disease class</span>
+                    <strong>{record.disease_name}</strong>
+                  </div>}
                 {Number.isFinite(record.prediction_score) && <div className="analysis-confidence">
-                  <span>Confidence</span>
+                  <span>{record.crop_only ? 'Crop identification confidence' : 'Confidence'}</span>
                   <strong>{score(record.prediction_score)}</strong>
                 </div>}
                 {record.top_predictions?.length > 1 && <div className="analysis-alternatives">
@@ -306,14 +335,14 @@ export function AnalysisPage() {
                     <span>{item.label}</span><strong>{score(item.score)}</strong>
                   </div>)}
                 </div>}
-                {recommendationItems.length > 0 && <div className="analysis-recommendations">
+                {!record.crop_only && recommendationItems.length > 0 && <div className="analysis-recommendations">
                   <div className="card-title">Recommendations</div>
                   {recommendationItems.map((item, index) => <p key={`${index}-${item}`}>{item}</p>)}
                 </div>}
-                <div className="analysis-result-links">
+                {!record.crop_only && <div className="analysis-result-links">
                   <Link className="button" to={record.id ? `/history?id=${encodeURIComponent(record.id)}` : '/history'}>View history</Link>
                   <Link className="button ghost" to="/recommendations">Guidance</Link>
-                </div>
+                </div>}
               </>}
         </section>
       </div>
