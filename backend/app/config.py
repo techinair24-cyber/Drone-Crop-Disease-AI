@@ -44,5 +44,5 @@ def get_settings() -> Settings:
         cors_origins=_cors_origins(),
         model_name=os.getenv("MODEL_NAME", "Local image classifier"),
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
-        gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        gemini_model=os.getenv("GEMINI_MODEL", "").strip() or "gemini-3.8-flash",
     )

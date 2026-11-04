@@ -627,8 +627,17 @@ def test_unhealthy_prediction_saves_image_based_gemini_analysis_and_retries(
         "expert_guidance": "Consult a local agricultural extension expert if symptoms spread.",
     }
 
-    async def analyze(actual_image, crop_name, mime_type, api_key, model_name):
-        calls.append((actual_image, crop_name, mime_type, api_key, model_name))
+    async def analyze(
+        actual_image, crop_name, mime_type, api_key, model_name, detection_id
+    ):
+        calls.append((
+            actual_image,
+            crop_name,
+            mime_type,
+            api_key,
+            model_name,
+            detection_id,
+        ))
         if len(calls) == 1:
             raise GeminiAnalysisError("Gemini analysis timed out. You can retry.")
         return analysis
@@ -663,6 +672,7 @@ def test_unhealthy_prediction_saves_image_based_gemini_analysis_and_retries(
         "image/png",
         "test-key",
         main.settings.gemini_model,
+        detection_id,
     )
 
     client.get("/api/recommendations")

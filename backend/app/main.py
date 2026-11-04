@@ -63,6 +63,12 @@ if settings.gps_max_skew_seconds < 0:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     store.initialize()
+    logger.info(
+        "Gemini configuration model=%s model_source=%s api_key_configured=%s",
+        settings.gemini_model,
+        "environment" if os.getenv("GEMINI_MODEL", "").strip() else "default",
+        bool(settings.gemini_api_key),
+    )
     crop_model.load()
     health_model.load()
     yield
@@ -320,12 +326,17 @@ async def _run_gemini_analysis(detection_id: str) -> dict:
             mime_type,
             settings.gemini_api_key,
             settings.gemini_model,
+            detection_id,
         )
     except GeminiAnalysisError as exc:
         logger.warning(
-            "Gemini analysis failed detection=%s status=%s",
+            "Gemini analysis failed detection_id=%s model=%s http_status=%s "
+            "google_status=%s google_message=%s",
             detection_id,
-            exc.status,
+            settings.gemini_model,
+            exc.http_status or "not_sent",
+            exc.google_status or "unspecified",
+            exc.google_message or str(exc),
         )
         updated = store.save_gemini_analysis(
             detection_id,
