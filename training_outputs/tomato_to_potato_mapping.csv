@@ -1,0 +1,54 @@
+review_number,actual_crop,predicted_crop,confidence,image_path
+1,Tomato,Potato,0.6895,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Healthy\7ee078a8-218e-4ebf-8935-ec9f844ab744___GH_HL Leaf 212.9.JPG
+2,Tomato,Potato,0.608,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Healthy\00bce074-967b-4d50-967a-31fdaa35e688___RS_HL 0223.JPG
+3,Tomato,Potato,0.6972,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Healthy\91b86c29-60fb-4383-8bc3-8e06cb5519f2___RS_HL 0283.JPG
+4,Tomato,Potato,0.4978,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Healthy\674f82cb-c61c-4944-b8d6-1afb6212f96f___RS_HL 9646.JPG
+5,Tomato,Potato,0.7342,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Leaf_Mold-2ecf7371-b3e3-4206-be7c-5a8f3656be8a___Crnl_L.Mold 8921.JPG
+6,Tomato,Potato,0.4116,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-d8b0ded7-7d30-4b52-acea-d1a3ca70a392___RS_Late.B 6096.JPG
+7,Tomato,Potato,0.5517,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Spider_mites Two-spotted_spider_mite-3472596b-2763-4b57-a0af-43c294f7ba93___Com.G_SpM_FL 1575.JPG
+8,Tomato,Potato,0.8083,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Early_blight-cfe67544-6d8c-48e5-af01-51732c571cb5___RS_Erly.B 8291.JPG
+9,Tomato,Potato,0.6573,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-ee90e57e-7289-4dcd-af6f-a585d97628b7___RS_Late.B 7040.JPG
+10,Tomato,Potato,0.8597,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-21f3629a-8126-4f23-85c5-05636ff87644___RS_Late.B 6906.JPG
+11,Tomato,Potato,0.9349,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-354a2aba-3f4a-4fc4-9598-cdbe291ed167___RS_Late.B 7098.JPG
+12,Tomato,Potato,0.8158,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-e56bc72a-6c24-4746-bd53-741c470e1be2___RS_Late.B 4990.JPG
+13,Tomato,Potato,0.6978,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Early_blight-48160d05-d3e5-44bb-810e-18d08407b529___RS_Erly.B 9606.JPG
+14,Tomato,Potato,0.9985,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Early_blight-e56354a5-5e3f-4ed6-bfe5-3c783a32dc98___RS_Erly.B 9413.JPG
+15,Tomato,Potato,0.8766,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-f84a91cc-ad11-409e-9115-1af741e5726d___RS_Late.B 5166.JPG
+16,Tomato,Potato,0.5337,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Bacterial_spot-2e917b6c-8617-419d-b54e-2e5222d88e09___UF.GRC_BS_Lab Leaf 8938.JPG
+17,Tomato,Potato,0.471,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Early_blight-9080624e-b5eb-456b-9743-2406cdd01113___RS_Erly.B 9618.JPG
+18,Tomato,Potato,0.914,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-26480c44-e0f2-4ab7-a6a9-919d532ecfd5___RS_Late.B 5037.JPG
+19,Tomato,Potato,0.5244,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-6d010698-482e-4445-afd2-dc8dca53ed19___RS_Late.B 5493.JPG
+20,Tomato,Potato,0.6943,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Septoria_leaf_spot-d2418bf8-8dfb-4a48-b3df-0f1acf515dfd___Matt.S_CG 7455.JPG
+21,Tomato,Potato,0.5547,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Spider_mites Two-spotted_spider_mite-0fb21160-9113-4c5a-b1d4-7001b5253bb9___Com.G_SpM_FL 8790.JPG
+22,Tomato,Potato,0.5284,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-7fc8f2f2-874c-49d1-935b-06f2d044db8f___RS_Late.B 6451.JPG
+23,Tomato,Potato,0.6609,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-413f7280-43ce-4f09-983c-8266588a6e67___RS_Late.B 7088.JPG
+24,Tomato,Potato,0.6525,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Septoria_leaf_spot-1c9a19ab-15e6-4af9-9130-603a329f356e___Matt.S_CG 7520.JPG
+25,Tomato,Potato,0.5762,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-b09b2807-58ca-4708-904e-05de3032ef92___RS_Late.B 6345.JPG
+26,Tomato,Potato,0.6173,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-41060f54-6ae7-4225-8c38-54490be4705d___RS_Late.B 7097.JPG
+27,Tomato,Potato,0.6675,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Early_blight-0378db62-5231-4eff-815d-c0deb0043e80___RS_Erly.B 7464.JPG
+28,Tomato,Potato,0.5682,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Early_blight-c35fc6de-4796-4f7a-a350-7bff160cbbd5___RS_Erly.B 7740.JPG
+29,Tomato,Potato,0.9444,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-4c74c480-981a-40ef-87e6-06713b9e21db___RS_Late.B 6972.JPG
+30,Tomato,Potato,0.9391,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Spider_mites Two-spotted_spider_mite-ac313c3d-a18f-4890-a93a-136c12012b6c___Com.G_SpM_FL 1491.JPG
+31,Tomato,Potato,0.6691,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-bff5e162-e242-484d-ac72-96c0da9a39f7___RS_Late.B 6284.JPG
+32,Tomato,Potato,0.771,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-03e8a2f9-6a7e-43dd-8a1b-3eb7cf99b89b___RS_Late.B 5034.JPG
+33,Tomato,Potato,0.9042,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-88d1ecf3-e03e-4ddf-9aa4-d9558f1ec2e2___RS_Late.B 7140.JPG
+34,Tomato,Potato,0.8975,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Target_Spot-a53a22ed-dd38-42bd-9626-4f2824531072___Com.G_TgS_FL 9851.JPG
+35,Tomato,Potato,0.5006,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-c9c8854f-00f2-4bec-b263-f03354f58114___RS_Late.B 6997.JPG
+36,Tomato,Potato,0.9439,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Septoria_leaf_spot-0b6a9374-858d-49ce-8a94-ab57c957718c___Matt.S_CG 2488.JPG
+37,Tomato,Potato,0.9932,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-edab4e30-5e08-4bf9-92eb-695d4472add6___RS_Late.B 5582.JPG
+38,Tomato,Potato,0.604,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Septoria_leaf_spot-5a79c447-4d9d-4daf-81a6-c23a00480a93___Matt.S_CG 2473.JPG
+39,Tomato,Potato,0.6027,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Spider_mites Two-spotted_spider_mite-fddf2531-e2d5-4e98-8b8d-725088227b66___Com.G_SpM_FL 1565.JPG
+40,Tomato,Potato,0.7721,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Early_blight-be847eed-94b5-4f0e-9b34-68cc842565a2___RS_Erly.B 7831.JPG
+41,Tomato,Potato,0.5144,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Spider_mites Two-spotted_spider_mite-40e7cd25-e77b-4081-8291-24acb4e57d90___Com.G_SpM_FL 1326.JPG
+42,Tomato,Potato,0.6497,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Septoria_leaf_spot-993f3e69-946a-4aa3-bd82-9e084d36e6de___JR_Sept.L.S 2512.JPG
+43,Tomato,Potato,0.6499,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Early_blight-3b1caf5d-9b90-4adc-bde6-8a16af479f0a___RS_Erly.B 8270.JPG
+44,Tomato,Potato,0.6241,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Bacterial_spot-666242bb-ccc7-4085-8d60-05b5eba349c0___GCREC_Bact.Sp 6249.JPG
+45,Tomato,Potato,0.4944,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-c18f749d-9774-43f6-9c27-ff3d532f551a___RS_Late.B 7100.JPG
+46,Tomato,Potato,0.9846,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Early_blight-d529889a-662a-4321-9bd8-888244d50af8___RS_Erly.B 8381.JPG
+47,Tomato,Potato,0.86,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Early_blight-cd2d8a7b-2389-4a2c-8647-b986092fa506___RS_Erly.B 8377.JPG
+48,Tomato,Potato,0.9245,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Early_blight-074bc781-f586-46b0-bef5-0237e3bf5043___RS_Erly.B 8375.JPG
+49,Tomato,Potato,0.8518,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Early_blight-573fc55b-8a73-48ba-b916-5d7f397977e4___RS_Erly.B 8384.JPG
+50,Tomato,Potato,0.5786,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-0f67214c-eede-4292-b731-30ef1c47b7b6___RS_Late.B 4902.JPG
+51,Tomato,Potato,0.9908,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-35a4883c-bef7-4465-b136-a7465a0752de___RS_Late.B 5054.JPG
+52,Tomato,Potato,0.9347,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Late_blight-44c7f2c3-bec1-4f42-b9b6-946c2b92f50e___RS_Late.B 6261.JPG
+53,Tomato,Potato,0.8476,C:\Users\Deepthi MG\Desktop\Leaf Dataset\Tomato\Unhealthy\Early_blight-cf3cffb2-f822-402d-90b9-d1df870c13f3___RS_Erly.B 7741.JPG

@@ -51,3 +51,9 @@ backend/uploads/
 backend/models/*
 !backend/models/plantvillage-mobilenetv2/
 !backend/models/plantvillage-mobilenetv2/**
+leaf_training_env/
+venv/
+.venv/
+__pycache__/
+*.pyc
+.keras_cache/
