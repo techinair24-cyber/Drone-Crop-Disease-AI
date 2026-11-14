@@ -535,15 +535,15 @@ async def predict(
     try:
         crop_result = crop_model.predict(image_bytes)
         detected_crop = crop_result["crop_name"]
-        if crop_name is not None and detected_crop.casefold() != crop_name.casefold():
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"Selected crop {crop_name} does not match the detected "
-                    f"crop {detected_crop}."
-                ),
-            )
-        result = health_model.predict(image_bytes, detected_crop)
+        prediction_crop = next(
+            (
+                name
+                for name in SUPPORTED_CROPS
+                if crop_name is not None and name.casefold() == crop_name.casefold()
+            ),
+            detected_crop,
+        )
+        result = health_model.predict(image_bytes, prediction_crop)
     except HTTPException:
         raise
     except ValueError as exc:
@@ -565,8 +565,12 @@ async def predict(
         record = store.create({
             "id": str(uuid.uuid4()),
             "filename": filename,
-            "crop_name": detected_crop,
-            "crop_confidence": crop_result["prediction_score"],
+            "crop_name": prediction_crop,
+            "crop_confidence": (
+                crop_result["prediction_score"]
+                if prediction_crop.casefold() == detected_crop.casefold()
+                else None
+            ),
             "health_status": result["health_status"],
             "health_confidence": result["health_confidence"],
             "health_probabilities": result["health_probabilities"],

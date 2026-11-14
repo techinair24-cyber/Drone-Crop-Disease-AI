@@ -785,19 +785,22 @@ def test_predict_rejects_unsupported_crop_selection(client):
     assert "Unsupported crop" in response.json()["detail"]
 
 
-def test_predict_rejects_manual_crop_that_conflicts_with_model(
+def test_predict_uses_selected_strawberry_when_crop_model_disagrees(
     client, monkeypatch
 ):
     install_ready_models(monkeypatch, crop_name="Apple")
 
     response = client.post(
         "/api/predict",
-        files={"file": ("leaf.png", make_image(), "image/png")},
-        data={"crop_name": "Tomato"},
+        files={"file": ("strawberry.png", make_image(), "image/png")},
+        data={"crop_name": "Strawberry", "source": "analysis"},
     )
 
-    assert response.status_code == 422
-    assert "does not match the detected crop Apple" in response.json()["detail"]
+    assert response.status_code == 201
+    detection = response.json()
+    assert detection["crop_name"] == "Strawberry"
+    assert detection["crop_confidence"] is None
+    assert detection["message"] == "Strawberry classified as Unhealthy."
 
 
 def test_stale_gps_fix_is_not_associated_with_image(client):
