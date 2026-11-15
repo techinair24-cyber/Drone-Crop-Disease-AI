@@ -752,6 +752,14 @@
   inset: 0;
 }
 
+.live-monitor-camera-view .live-monitor-stream-hidden {
+  visibility: hidden;
+}
+
+.live-monitor-camera-view .live-monitor-selected-image {
+  z-index: 1;
+}
+
 .live-monitor-side {
   display: grid;
   min-width: 0;

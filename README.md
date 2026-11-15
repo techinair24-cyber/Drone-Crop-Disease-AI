@@ -10,7 +10,7 @@ DroneCrop AI is a responsive crop-imaging dashboard with a React/Vite frontend a
 | Image upload and server-side validation | Implemented; inference requires `MODEL_PATH` to point to a compatible local model |
 | Detection history, filters, pagination, CSV export, stats | Implemented with SQLite |
 | GPS association | Optional coordinates can be submitted with an image; no GPS receiver is connected |
-| ESP32-CAM | Not connected; camera capture and monitoring controls remain unavailable |
+| ESP32-CAM | Live Monitoring can display the stream URL configured in Settings and capture its current frame; the browser must be able to access the stream and allow canvas capture |
 | APM 2.8 telemetry | Not connected; no flight-control or motor-arming commands exist |
 | Plant disease classifier | Bundled under `backend/models/plantvillage-mobilenetv2`; configure `MODEL_PATH` to enable inference |
 | Vercel / Render | Configuration and deployment guidance included; not deployed from this workspace |
@@ -167,4 +167,4 @@ Tests cover backend/model-unavailable behavior, status reporting, validation and
 
 ## Hardware integration safety
 
-The ESP32-CAM, GPS receiver and APM 2.8 are intentionally treated as separate future integrations. A safe next step is a backend-mediated image upload endpoint and timestamped GPS metadata, followed by a read-only telemetry service using a supported serial/network bridge. Validate fix quality and capture-time alignment before attaching a location. Do not expose device credentials to the browser, forward arbitrary commands, or add arming/flight-control behavior to this web UI.
+The ESP32-CAM stream URL is configured per browser in Settings and is used directly by Live Monitoring; no camera is assumed when the URL is unset. Capturing a frame may require the camera to allow browser canvas access (CORS), especially when the frontend and camera use different origins. GPS and APM 2.8 remain unconnected. A safe next step for private or cross-origin hardware is a narrowly scoped backend-mediated image endpoint and timestamped GPS metadata, followed by read-only telemetry using a supported serial/network bridge. Validate fix quality and capture-time alignment before attaching a location. Do not expose device credentials to the browser, forward arbitrary commands, or add arming/flight-control behavior to this web UI.

@@ -8,7 +8,7 @@ import {
 import { api, exportDetections } from './api.js'
 import { getCameraConstraints, getCameraErrorMessage, stopCameraStream } from './camera.js'
 import { getCurrentLocation, hasValidCoordinates } from './location.js'
-import { getLatestDetection, scheduleMonitorRefresh } from './monitoring.js'
+import { captureCameraFrame, getLatestDetection, scheduleMonitorRefresh } from './monitoring.js'
 import { SUPPORTED_CROPS } from './supportedCrops.js'
 import { predictCrop } from './cropPrediction.js'
 import { getCropRecommendation, getDetectionHealthStatus } from './recommendationKnowledge.js'
@@ -142,39 +142,68 @@ export function MonitorPage() {
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [cameraEndpoint] = useState(() => localStorage.getItem('cameraEndpoint')?.trim() || '')
+  const [cameraState, setCameraState] = useState(cameraEndpoint ? 'connecting' : 'unconfigured')
+  const [cameraError, setCameraError] = useState('')
+  const [capturedPhoto, setCapturedPhoto] = useState(null)
+  const [captureBusy, setCaptureBusy] = useState(false)
+  const [streamAttempt, setStreamAttempt] = useState(0)
+  const cameraImageRef = useRef(null)
+  const cameraTimeoutRef = useRef(null)
+  const cameraStateRef = useRef(cameraEndpoint ? 'connecting' : 'unconfigured')
   const [locationMessage, setLocationMessage] = useState('')
   const latest = useLoad(() => getLatestDetection(api.detections), [])
-  const [failedRemoteImageUrl, setFailedRemoteImageUrl] = useState('')
   const navigate = useNavigate()
   useEffect(() => {
     const timer = scheduleMonitorRefresh(latest.refresh)
     return () => window.clearInterval(timer)
   }, [latest.refresh])
+  useEffect(() => {
+    if (!cameraEndpoint) return undefined
+    cameraTimeoutRef.current = window.setTimeout(() => {
+      cameraTimeoutRef.current = null
+      if (cameraStateRef.current === 'connecting') {
+        cameraStateRef.current = 'unavailable'
+        setCameraState('unavailable')
+        setCameraError('ESP32-CAM connection timed out. Check the camera and its configured stream URL in Settings.')
+      }
+    }, 10_000)
+    return () => {
+      if (cameraTimeoutRef.current !== null) {
+        window.clearTimeout(cameraTimeoutRef.current)
+        cameraTimeoutRef.current = null
+      }
+    }
+  }, [cameraEndpoint, streamAttempt])
+  useEffect(() => () => {
+    if (capturedPhoto?.url) URL.revokeObjectURL(capturedPhoto.url)
+  }, [capturedPhoto])
   const latestRecord = result || latest.data
   const record = latestRecord?.crop_only ? null : latestRecord
-  const remoteImageUrl = record?.image_url ? api.imageUrl(record.image_url) : ''
   const onFile = (event) => {
     const selected = event.target.files?.[0]
     if (!selected) return
     const validationError = imageValidationError(selected)
-    if (validationError) { setError(new Error(validationError)); event.target.value = ''; setFile(null); setPreview(''); setResult(null); return }
+    if (validationError) { setError(new Error(validationError)); event.target.value = ''; setFile(null); setPreview(''); setCapturedPhoto(null); setResult(null); return }
     setError(null)
+    setCameraError('')
     setLocationMessage('')
     setResult(null)
+    setCapturedPhoto(null)
     if (preview) URL.revokeObjectURL(preview)
     setFile(selected)
     setPreview(URL.createObjectURL(selected))
   }
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview) }, [preview])
-  const analyze = async () => {
-    if (!file) return
+  const analyze = async (fileToAnalyze = file) => {
+    if (!fileToAnalyze) return
     setBusy(true); setError(null)
     try {
       const location = await getCurrentLocation()
       setLocationMessage(location.message)
       const response = await predictCrop(
         api,
-        file,
+        fileToAnalyze,
         selectedCrop,
         location.coordinates,
         'live_monitoring',
@@ -183,15 +212,54 @@ export function MonitorPage() {
       sessionStorage.setItem('latestAnalysis', JSON.stringify(response))
     } catch (cause) { setError(cause) } finally { setBusy(false) }
   }
-  const cameraAvailable = Boolean(remoteImageUrl) && remoteImageUrl !== failedRemoteImageUrl
-  const cameraStatus = cameraAvailable ? 'Available' : latest.busy && !record ? null : 'Unavailable'
-  const cameraPlaceholder = cameraStatus === 'Available'
-    ? 'Feed unavailable'
-    : cameraStatus === 'Unavailable'
-      ? 'Camera unavailable'
-      : latest.busy
-        ? 'Checking camera'
-        : 'Camera status unavailable'
+  const capturePhoto = async () => {
+    const cameraImage = cameraImageRef.current
+    if (cameraState !== 'available' || !cameraImage) {
+      setCameraError('ESP32-CAM is offline or has not produced a frame yet.')
+      return
+    }
+    setCaptureBusy(true)
+    setCameraError('')
+    try {
+      const blob = await captureCameraFrame(cameraImage)
+      const photoFile = new File([blob], `esp32-crop-photo-${Date.now()}.jpg`, { type: 'image/jpeg' })
+      const validationError = imageValidationError(photoFile)
+      if (validationError) throw new Error(validationError)
+      setCapturedPhoto({ file: photoFile, url: URL.createObjectURL(photoFile) })
+    } catch (cause) {
+      setCameraError(cause?.name === 'SecurityError'
+        ? 'The ESP32-CAM stream does not allow browser frame capture. Enable camera CORS or configure a same-origin snapshot URL.'
+        : cause?.message || 'The ESP32-CAM frame could not be captured.')
+    } finally {
+      setCaptureBusy(false)
+    }
+  }
+  const useCapturedPhoto = async () => {
+    if (!capturedPhoto) return
+    const selectedFile = capturedPhoto.file
+    setCapturedPhoto(null)
+    setCameraError('')
+    setError(null)
+    setLocationMessage('')
+    setResult(null)
+    if (preview) URL.revokeObjectURL(preview)
+    setPreview('')
+    setFile(selectedFile)
+    await analyze(selectedFile)
+  }
+  const cameraAvailable = cameraState === 'available'
+  const cameraStatus = cameraAvailable
+    ? 'Available'
+    : cameraState === 'connecting'
+      ? 'Connecting'
+      : cameraState === 'unconfigured'
+        ? 'Not configured'
+        : 'Unavailable'
+  const cameraPlaceholder = !cameraEndpoint
+    ? 'Configure the ESP32-CAM stream URL in Settings'
+    : cameraState === 'connecting'
+      ? 'Connecting to ESP32-CAM'
+      : 'ESP32-CAM unavailable'
   return <>
     <div className="monitor-page">
       <div className="monitor-page-heading"><h1 className="page-title">Live monitoring</h1></div>
@@ -199,24 +267,74 @@ export function MonitorPage() {
         <div className="card live-monitor-preview-card">
           <div className="card-heading">
             <div className="card-title">Camera Preview</div>
-            {cameraStatus && <span className={`badge ${cameraStatus === 'Available' ? '' : 'neutral'}`}>{cameraStatus}</span>}
+            <span className={`badge ${cameraStatus === 'Available' ? '' : 'neutral'}`}>{cameraStatus}</span>
           </div>
           <div className="camera-view live-monitor-camera-view">
-            {preview || cameraAvailable
-              ? <img className="preview-image" src={preview || remoteImageUrl} alt={preview ? 'Selected crop for analysis' : 'Latest camera image'} onError={() => { if (!preview) setFailedRemoteImageUrl(remoteImageUrl) }} />
-              : <div className="camera-placeholder"><Camera size={27} /><strong>{cameraPlaceholder}</strong></div>}
+            {cameraEndpoint && <img
+              key={streamAttempt}
+              className={`preview-image live-monitor-stream${preview || capturedPhoto ? ' live-monitor-stream-hidden' : ''}`}
+              ref={cameraImageRef}
+              src={cameraEndpoint}
+              alt="Live ESP32-CAM stream"
+              onLoad={(event) => {
+                if (event.currentTarget !== cameraImageRef.current) return
+                if (cameraTimeoutRef.current !== null) {
+                  window.clearTimeout(cameraTimeoutRef.current)
+                  cameraTimeoutRef.current = null
+                }
+                cameraStateRef.current = 'available'
+                setCameraState('available')
+                setCameraError('')
+              }}
+              onError={(event) => {
+                if (event.currentTarget !== cameraImageRef.current) return
+                if (cameraTimeoutRef.current !== null) {
+                  window.clearTimeout(cameraTimeoutRef.current)
+                  cameraTimeoutRef.current = null
+                }
+                cameraStateRef.current = 'unavailable'
+                setCameraState('unavailable')
+                setCameraError('Unable to load the ESP32-CAM stream. Check that the camera is online and the configured URL is correct.')
+              }}
+            />}
+            {(capturedPhoto || preview) && <img
+              className="preview-image live-monitor-selected-image"
+              src={capturedPhoto?.url || preview}
+              alt={capturedPhoto ? 'Captured ESP32-CAM crop preview' : 'Selected crop for analysis'}
+            />}
+            {!preview && !capturedPhoto && (!cameraEndpoint || !cameraAvailable) && <div className="camera-placeholder">
+              <Camera size={27} />
+              <strong>{cameraPlaceholder}</strong>
+              {!cameraEndpoint && <Link className="button ghost" to="/settings">Open Settings</Link>}
+            </div>}
           </div>
           <div className="camera-actions live-monitor-actions">
             <input className="hidden-input" id="crop-upload" type="file" accept="image/jpeg,image/png" onChange={onFile} />
             <label className="button" htmlFor="crop-upload"><Upload size={14} />Upload image</label>
+            {capturedPhoto
+              ? <>
+                <button className="button" type="button" onClick={() => { setCapturedPhoto(null); setCameraError('') }}>Retake</button>
+                <button className="button primary" type="button" onClick={useCapturedPhoto} disabled={busy}><Check size={14} />Use Photo</button>
+              </>
+              : <button className="button" type="button" onClick={capturePhoto} disabled={!cameraAvailable || captureBusy || busy}>
+                {captureBusy ? <RefreshCw size={14} className="spin" /> : <Camera size={14} />}
+                {captureBusy ? 'Capturing…' : 'Capture Photo'}
+              </button>}
+            {!cameraAvailable && cameraEndpoint && !capturedPhoto && <button className="button" type="button" onClick={() => {
+              setCameraError('')
+              cameraStateRef.current = 'connecting'
+              setCameraState('connecting')
+              setStreamAttempt((attempt) => attempt + 1)
+            }}>Retry connection</button>}
             <select className="select" aria-label="Crop type" value={selectedCrop} onChange={(event) => setSelectedCrop(event.target.value)} disabled={busy}>
               <option value="">Automatic Crop Detection</option>
               {SUPPORTED_CROPS.map((crop) => <option key={crop} value={crop}>{crop}</option>)}
             </select>
-            <button className="button primary" disabled={!file || busy} onClick={analyze}>{busy ? <RefreshCw size={14} className="spin" /> : <Crosshair size={14} />}{busy ? 'Analyzing…' : 'Analyze image'}</button>
+            <button className="button primary" disabled={!file || busy || Boolean(capturedPhoto)} onClick={() => analyze()}>{busy ? <RefreshCw size={14} className="spin" /> : <Crosshair size={14} />}{busy ? 'Analyzing…' : 'Analyze image'}</button>
           </div>
           {file && <div className="card-subtitle live-monitor-file">{file.name} · {(file.size / (1024 * 1024)).toFixed(2)} MB</div>}
           {locationMessage && <div className="analysis-location-message" role="status">{locationMessage}</div>}
+          {cameraError && <div className="analysis-error" role="alert">{cameraError}</div>}
           <ErrorNotice error={error} />
         </div>
         <div className="live-monitor-side">
@@ -935,7 +1053,7 @@ export function SettingsPage() {
         </section>
         <section className="card settings-card" aria-labelledby="settings-preferences-title">
           <div className="card-heading"><div className="card-title" id="settings-preferences-title">Preferences</div></div>
-          <label className="form-row"><span className="form-label">Camera endpoint</span><input className="field form-input" type="url" placeholder="http://camera.local/stream" value={cameraEndpoint} onChange={(event) => setCameraEndpoint(event.target.value)} /></label>
+          <label className="form-row"><span className="form-label">Camera endpoint</span><input className="field form-input" type="url" placeholder="http://camera.local/stream" value={cameraEndpoint} onChange={(event) => setCameraEndpoint(event.target.value)} /><span className="form-help">Live Monitoring uses this ESP32-CAM stream URL. Cross-origin streams must allow browser canvas capture.</span></label>
           <label className="form-row"><span className="form-label">Status refresh interval</span><select className="select form-input" value={refresh} onChange={(event) => setRefresh(event.target.value)}><option value="10000">10 seconds</option><option value="30000">30 seconds</option><option value="60000">1 minute</option><option value="300000">5 minutes</option></select></label>
           <label className="form-row"><span className="form-label">Map tiles</span><select className="select form-input" value={mapStyle} onChange={(event) => setMapStyle(event.target.value)}><option value="standard">Standard (OpenStreetMap)</option></select></label>
         </section>
