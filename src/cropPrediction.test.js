@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { api } from './api.js'
+import { fetchEsp32Photo, getEsp32CamEndpoints } from './camera.js'
 import { predictCrop } from './cropPrediction.js'
 import { SUPPORTED_CROPS } from './supportedCrops.js'
 
@@ -64,6 +66,47 @@ test('records Monitor predictions with live-monitoring source', async () => {
 
   assert.deepEqual(api.calls, [[file, '', location, 'live_monitoring']])
   assert.equal(result.health_status, 'Unhealthy')
+})
+
+test('sends an ESP32-CAM capture through the existing analysis prediction pipeline', async () => {
+  const endpoints = getEsp32CamEndpoints('http://esp.local/stream')
+  const image = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' })
+  const capturedBlob = await fetchEsp32Photo(endpoints.capture, {
+    fetchImpl: async (url) => {
+      assert.equal(url, 'http://esp.local/capture')
+      return new Response(image, { status: 200 })
+    },
+  })
+  const capturedFile = new File([capturedBlob], 'esp32-crop-photo.jpg', { type: capturedBlob.type })
+  const originalFetch = globalThis.fetch
+  const originalStorage = globalThis.localStorage
+  let predictionRequest
+  globalThis.localStorage = { getItem: () => null }
+  globalThis.fetch = async (url, options) => {
+    predictionRequest = { url, options }
+    return new Response(JSON.stringify({
+      crop_name: 'Apple',
+      crop_confidence: 0.95,
+      health_status: 'Healthy',
+      health_confidence: 0.8,
+      health_probabilities: { Healthy: 0.8, Unhealthy: 0.2 },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+  try {
+    const result = await predictCrop(api, capturedFile, 'Apple', location, 'analysis')
+
+    assert.equal(result.health_status, 'Healthy')
+    assert.equal(predictionRequest.url, `${api.defaultBaseUrl}/api/predict`)
+    assert.equal(predictionRequest.options.body.get('file').name, capturedFile.name)
+    assert.equal(predictionRequest.options.body.get('file').type, 'image/jpeg')
+    assert.equal(await predictionRequest.options.body.get('file').text(), await capturedFile.text())
+    assert.equal(predictionRequest.options.body.get('crop_name'), 'Apple')
+    assert.equal(predictionRequest.options.body.get('source'), 'analysis')
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalStorage === undefined) delete globalThis.localStorage
+    else globalThis.localStorage = originalStorage
+  }
 })
 
 test('rejects invalid manual selection before requesting prediction', async () => {

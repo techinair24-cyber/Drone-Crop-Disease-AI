@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  captureCameraFrame,
   getLatestDetection,
   MONITOR_REFRESH_INTERVAL_MS,
   scheduleMonitorRefresh,
@@ -25,40 +24,6 @@ test('gets the newest detection and its image URL', async () => {
 
 test('returns no detection when the backend has no uploaded image', async () => {
   assert.equal(await getLatestDetection(async () => ({ items: [] })), null)
-})
-
-test('captures the current frame dimensions from the configured camera image', async () => {
-  const calls = []
-  const blob = new Blob(['jpeg-frame'], { type: 'image/jpeg' })
-  const image = { naturalWidth: 640, naturalHeight: 480 }
-  const canvas = {
-    getContext: () => ({ drawImage: (...args) => calls.push(args) }),
-    toBlob: (callback, type, quality) => {
-      calls.push([type, quality])
-      callback(blob)
-    },
-  }
-
-  const result = await captureCameraFrame(image, canvas)
-
-  assert.equal(canvas.width, 640)
-  assert.equal(canvas.height, 480)
-  assert.deepEqual(calls, [[image, 0, 0, 640, 480], ['image/jpeg', 0.92]])
-  assert.equal(result, blob)
-})
-
-test('rejects capture when the ESP32-CAM has no loaded frame', async () => {
-  await assert.rejects(
-    captureCameraFrame({ naturalWidth: 0, naturalHeight: 0 }, {}),
-    /no available frame/
-  )
-})
-
-test('reports capture failure when a browser canvas is unavailable', async () => {
-  await assert.rejects(
-    captureCameraFrame({ naturalWidth: 640, naturalHeight: 480 }),
-    /browser canvas is required/
-  )
 })
 
 test('schedules monitor refresh every 30 seconds', () => {

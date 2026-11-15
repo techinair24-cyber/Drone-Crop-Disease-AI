@@ -752,18 +752,26 @@
   inset: 0;
 }
 
-.live-monitor-camera-view .live-monitor-stream-hidden {
-  visibility: hidden;
-}
-
-.live-monitor-camera-view .live-monitor-selected-image {
-  z-index: 1;
-}
-
 .live-monitor-side {
   display: grid;
   min-width: 0;
   gap: 14px;
+}
+
+.live-monitor-upload-preview {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.live-monitor-upload-preview img {
+  width: min(100%, 360px);
+  max-height: 220px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  object-fit: contain;
 }
 
 .live-monitor-file {
@@ -879,15 +887,6 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
-}
-
-.analysis-camera-video {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  background: #101610;
 }
 
 .analysis-preview-empty,
