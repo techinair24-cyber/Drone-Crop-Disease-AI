@@ -740,10 +740,13 @@
 
 .live-monitor-preview-card {
   min-width: 0;
+  width: 100%;
+  max-width: 750px;
+  margin-inline: auto;
 }
 
-.live-monitor-camera-view {
-  aspect-ratio: 16 / 10;
+.camera-view.live-monitor-camera-view {
+  aspect-ratio: 4 / 3;
   border-style: solid;
 }
 
@@ -2148,11 +2151,6 @@
 
   .monitor-page-heading {
     margin-bottom: 18px;
-  }
-
-  .live-monitor-camera-view {
-    height: 240px;
-    aspect-ratio: auto;
   }
 
   .overview-metrics .metric-label {
