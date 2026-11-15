@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {
-  getLatestDetection,
-  MONITOR_REFRESH_INTERVAL_MS,
-  scheduleMonitorRefresh,
-} from './monitoring.js'
+import { getLatestDetection } from './monitoring.js'
 import { SUPPORTED_CROPS } from './supportedCrops.js'
 
 test('gets the newest detection and its image URL', async () => {
@@ -24,20 +20,6 @@ test('gets the newest detection and its image URL', async () => {
 
 test('returns no detection when the backend has no uploaded image', async () => {
   assert.equal(await getLatestDetection(async () => ({ items: [] })), null)
-})
-
-test('schedules monitor refresh every 30 seconds', () => {
-  const refresh = () => {}
-  let scheduled
-  const timer = scheduleMonitorRefresh(refresh, (callback, delay) => {
-    scheduled = { callback, delay }
-    return 17
-  })
-
-  assert.equal(scheduled.callback, refresh)
-  assert.equal(scheduled.delay, 30_000)
-  assert.equal(scheduled.delay, MONITOR_REFRESH_INTERVAL_MS)
-  assert.equal(timer, 17)
 })
 
 test('exposes all supported crop classes for selection', () => {

@@ -40,12 +40,15 @@ export function getEsp32CamEndpoints(configuredEndpoint) {
 
   const configuredPath = url.pathname.replace(/\/+$/, '')
   const basePath = configuredPath.replace(/\/(?:stream|capture|status)$/i, '')
-  const baseUrl = `${url.origin}${basePath}`
   const query = url.search
+  const stream = /\/stream$/i.test(configuredPath)
+    ? `${url.origin}${configuredPath}${query}`
+    : `${url.protocol}//${url.hostname}:81${basePath}/stream${query}`
+  const port80Base = `http://${url.hostname}:80${basePath}`
   return {
-    stream: `${baseUrl}/stream${query}`,
-    capture: `${baseUrl}/capture${query}`,
-    status: `${baseUrl}/status${query}`,
+    stream,
+    capture: `${port80Base}/capture${query}`,
+    status: `${port80Base}/status${query}`,
   }
 }
 

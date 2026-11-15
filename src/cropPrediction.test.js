@@ -73,7 +73,7 @@ test('sends an ESP32-CAM capture through the existing analysis prediction pipeli
   const image = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' })
   const capturedBlob = await fetchEsp32Photo(endpoints.capture, {
     fetchImpl: async (url) => {
-      assert.equal(url, 'http://esp.local/capture')
+      assert.equal(url, 'http://esp.local:80/capture')
       return new Response(image, { status: 200 })
     },
   })

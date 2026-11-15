@@ -40,7 +40,6 @@ export function AppShell() {
   const [systemTheme, setSystemTheme] = useState(getSystemTheme)
   const location = useLocation()
   const theme = themePreference || systemTheme
-  const refreshMs = Math.max(5000, Number(localStorage.getItem('refreshInterval') || 30000))
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -65,13 +64,18 @@ export function AppShell() {
     }).catch(() => {
       if (active) setHealth(null)
     })
+    const markOffline = () => setHealth(null)
     check()
-    const timer = window.setInterval(check, refreshMs)
+    window.addEventListener('online', check)
+    window.addEventListener('focus', check)
+    window.addEventListener('offline', markOffline)
     return () => {
       active = false
-      window.clearInterval(timer)
+      window.removeEventListener('online', check)
+      window.removeEventListener('focus', check)
+      window.removeEventListener('offline', markOffline)
     }
-  }, [refreshMs])
+  }, [])
 
   return (
     <div className="app-shell">

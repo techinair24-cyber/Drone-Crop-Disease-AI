@@ -10,7 +10,7 @@ DroneCrop AI is a responsive crop-imaging dashboard with a React/Vite frontend a
 | Image upload and server-side validation | Implemented; inference requires `MODEL_PATH` to point to a compatible local model |
 | Detection history, filters, pagination, CSV export, stats | Implemented with SQLite |
 | GPS association | Optional coordinates can be submitted with an image; no GPS receiver is connected |
-| ESP32-CAM | Live Monitoring reads the configured `/stream` and `/status` routes; AI Analysis requests a photo from `/capture`. Firmware and a reachable device URL are not included in this repository |
+| ESP32-CAM | Firmware source is in `firmware/esp32-cam/esp32-cam.ino`. Live Monitoring uses port-81 `/stream`; AI Analysis uses port-80 `/capture`; port-80 `/status` checks availability |
 | APM 2.8 telemetry | Not connected; no flight-control or motor-arming commands exist |
 | Plant disease classifier | Bundled under `backend/models/plantvillage-mobilenetv2`; configure `MODEL_PATH` to enable inference |
 | Vercel / Render | Configuration and deployment guidance included; not deployed from this workspace |
@@ -167,4 +167,4 @@ Tests cover backend/model-unavailable behavior, status reporting, validation and
 
 ## Hardware integration safety
 
-The ESP32-CAM endpoint is configured per browser in Settings; the app derives `/stream`, `/capture` and `/status` routes from that configured URL. The firmware and device are not included here, so route behavior and hardware operation must be verified against the actual firmware. A public HTTPS frontend may be blocked from contacting an HTTP camera by mixed-content rules; browser CORS and private-network access restrictions may also apply. Use HTTPS on the camera with a browser-trusted certificate or a narrowly scoped HTTPS reverse proxy on the same local network that exposes the camera routes with appropriate CORS headers. GPS and APM 2.8 remain unconnected. Do not expose device credentials to the browser, forward arbitrary commands, or add arming/flight-control behavior to this web UI.
+The ESP32-CAM stream URL is configured per browser in Settings. Live Monitoring preserves its `/stream` URL (expected on port 81); AI Analysis and the status check use the same configured host/path on port 80 at `/capture` and `/status`. Before uploading the sketch, replace the Wi-Fi placeholders with local credentials. The firmware and device must still be built and tested on the actual ESP32-CAM. A public HTTPS frontend may be blocked from contacting an HTTP camera by mixed-content rules; browser CORS and private-network access restrictions may also apply. Use HTTPS on the camera with a browser-trusted certificate or a narrowly scoped HTTPS reverse proxy on the same local network that exposes the camera routes with appropriate CORS headers. GPS and APM 2.8 remain unconnected. Do not expose device credentials to the browser, forward arbitrary commands, or add arming/flight-control behavior to this web UI.

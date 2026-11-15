@@ -8,7 +8,7 @@ import {
 import { api, exportDetections } from './api.js'
 import { checkEsp32Status, fetchEsp32Photo, getEsp32CamEndpoints } from './camera.js'
 import { getCurrentLocation, hasValidCoordinates } from './location.js'
-import { getLatestDetection, scheduleMonitorRefresh } from './monitoring.js'
+import { getLatestDetection } from './monitoring.js'
 import { SUPPORTED_CROPS } from './supportedCrops.js'
 import { predictCrop } from './cropPrediction.js'
 import { getCropRecommendation, getDetectionHealthStatus } from './recommendationKnowledge.js'
@@ -164,10 +164,6 @@ export function MonitorPage() {
   }
   const streamUrl = cameraUrls?.stream || ''
   const statusUrl = cameraUrls?.status || ''
-  useEffect(() => {
-    const timer = scheduleMonitorRefresh(latest.refresh)
-    return () => window.clearInterval(timer)
-  }, [latest.refresh])
   useEffect(() => {
     if (!streamUrl) return undefined
     cameraTimeoutRef.current = window.setTimeout(() => {
@@ -924,7 +920,6 @@ export function SettingsPage() {
   const [saved, setSaved] = useState(false)
   const [backendUrl, setBackendUrl] = useState(api.baseUrl)
   const [cameraEndpoint, setCameraEndpoint] = useState(localStorage.getItem('cameraEndpoint') || '')
-  const [refresh, setRefresh] = useState(localStorage.getItem('refreshInterval') || '30000')
   const [mapStyle, setMapStyle] = useState(localStorage.getItem('mapStyle') || 'standard')
   const [formError, setFormError] = useState('')
   const connection = useLoad(() => api.health(), [])
@@ -946,7 +941,6 @@ export function SettingsPage() {
       if (normalizedUrl === api.defaultBaseUrl) localStorage.removeItem('apiBaseUrl')
       else localStorage.setItem('apiBaseUrl', normalizedUrl)
       localStorage.setItem('cameraEndpoint', cameraEndpoint.trim())
-      localStorage.setItem('refreshInterval', refresh)
       localStorage.setItem('mapStyle', mapStyle)
       setBackendUrl(normalizedUrl)
       setFormError('')
@@ -979,8 +973,7 @@ export function SettingsPage() {
         </section>
         <section className="card settings-card" aria-labelledby="settings-preferences-title">
           <div className="card-heading"><div className="card-title" id="settings-preferences-title">Preferences</div></div>
-          <label className="form-row"><span className="form-label">Camera endpoint</span><input className="field form-input" type="url" value={cameraEndpoint} onChange={(event) => setCameraEndpoint(event.target.value)} /><span className="form-help">Enter the URL supplied by your ESP32-CAM firmware, or its /stream URL. Live Monitoring uses /stream and /status; AI Analysis requests /capture. Browser CORS, local-network, and HTTPS mixed-content rules may block access.</span></label>
-          <label className="form-row"><span className="form-label">Status refresh interval</span><select className="select form-input" value={refresh} onChange={(event) => setRefresh(event.target.value)}><option value="10000">10 seconds</option><option value="30000">30 seconds</option><option value="60000">1 minute</option><option value="300000">5 minutes</option></select></label>
+          <label className="form-row"><span className="form-label">Camera endpoint</span><input className="field form-input" type="url" value={cameraEndpoint} onChange={(event) => setCameraEndpoint(event.target.value)} /><span className="form-help">Enter the ESP32-CAM stream URL (for example, its port-81 /stream route). Live Monitoring uses that stream; AI Analysis uses port 80 /capture and /status. Browser CORS, local-network, and HTTPS mixed-content rules may block access.</span></label>
           <label className="form-row"><span className="form-label">Map tiles</span><select className="select form-input" value={mapStyle} onChange={(event) => setMapStyle(event.target.value)}><option value="standard">Standard (OpenStreetMap)</option></select></label>
         </section>
         <div className="settings-actions">
