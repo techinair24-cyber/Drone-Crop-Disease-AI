@@ -3,9 +3,10 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   AlertCircle, ArrowDownToLine, ArrowRight, Camera, Check, ChevronLeft,
   ChevronRight, CloudOff, Crosshair, FileImage, ImagePlus, Leaf,
-  MapPin, RefreshCw, Search, ShieldAlert, Upload,
+  MapPin, RefreshCw, Search, ShieldAlert, Upload, X,
 } from 'lucide-react'
 import { api, exportDetections } from './api.js'
+import { getCameraConstraints, getCameraErrorMessage, stopCameraStream } from './camera.js'
 import { getCurrentLocation, hasValidCoordinates } from './location.js'
 import { getLatestDetection, scheduleMonitorRefresh } from './monitoring.js'
 import { SUPPORTED_CROPS } from './supportedCrops.js'
@@ -248,10 +249,16 @@ export function AnalysisPage() {
   const [latest, setLatest] = useState(readStoredAnalysis)
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState('')
+  const [cameraMode, setCameraMode] = useState('closed')
+  const [cameraError, setCameraError] = useState('')
+  const [capturedPhoto, setCapturedPhoto] = useState(null)
   const [selectedCrop, setSelectedCrop] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [locationMessage, setLocationMessage] = useState('')
+  const videoRef = useRef(null)
+  const cameraStreamRef = useRef(null)
+  const cameraRequestRef = useRef(0)
   const record = latest?.detection || latest
   const onFile = (event) => {
     const selected = event.target.files?.[0]
@@ -266,8 +273,109 @@ export function AnalysisPage() {
     setPreview(URL.createObjectURL(selected))
   }
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview) }, [preview])
-  const analyze = async () => {
-    if (!file) return
+  useEffect(() => () => {
+    cameraRequestRef.current += 1
+    stopCameraStream(cameraStreamRef.current)
+  }, [])
+  useEffect(() => {
+    if (cameraMode === 'live' && videoRef.current && cameraStreamRef.current) {
+      videoRef.current.srcObject = cameraStreamRef.current
+    }
+  }, [cameraMode])
+  useEffect(() => () => {
+    if (capturedPhoto?.url) URL.revokeObjectURL(capturedPhoto.url)
+  }, [capturedPhoto])
+  const releaseCamera = () => {
+    cameraRequestRef.current += 1
+    stopCameraStream(cameraStreamRef.current)
+    cameraStreamRef.current = null
+    if (videoRef.current) videoRef.current.srcObject = null
+  }
+  const closeCamera = () => {
+    releaseCamera()
+    setCameraMode('closed')
+    setCameraError('')
+    setCapturedPhoto(null)
+  }
+  const openCamera = async () => {
+    setCameraError('')
+    setCapturedPhoto(null)
+    setCameraMode('requesting')
+    const requestId = ++cameraRequestRef.current
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError('Camera access is not available in this browser or page context.')
+      setCameraMode('error')
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(getCameraConstraints())
+      if (requestId !== cameraRequestRef.current) {
+        stopCameraStream(stream)
+        return
+      }
+      cameraStreamRef.current = stream
+      setCameraMode('live')
+    } catch (cause) {
+      if (requestId !== cameraRequestRef.current) return
+      setCameraError(getCameraErrorMessage(cause))
+      setCameraMode('error')
+    }
+  }
+  const takePhoto = async () => {
+    const video = videoRef.current
+    if (!video?.videoWidth || !video.videoHeight) {
+      setCameraError('The camera is still starting. Please wait a moment and try again.')
+      return
+    }
+    const requestId = cameraRequestRef.current
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    try {
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('The photo could not be captured. Please try again.')
+      context.drawImage(video, 0, 0, canvas.width, canvas.height)
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob((result) => {
+          if (result) resolve(result)
+          else reject(new Error('The photo could not be captured. Please try again.'))
+        }, 'image/jpeg', 0.92)
+      })
+      if (requestId !== cameraRequestRef.current) return
+      const photoFile = new File([blob], `crop-photo-${Date.now()}.jpg`, { type: 'image/jpeg' })
+      const validationError = imageValidationError(photoFile)
+      if (validationError) {
+        setCameraError(validationError)
+        setCameraMode('error')
+        return
+      }
+      setCapturedPhoto({ file: photoFile, url: URL.createObjectURL(photoFile) })
+      setCameraMode('captured')
+      setCameraError('')
+    } catch (cause) {
+      if (requestId === cameraRequestRef.current) {
+        setCameraError(cause.message || 'The photo could not be captured. Please try again.')
+        setCameraMode('error')
+      }
+    } finally {
+      if (requestId === cameraRequestRef.current) releaseCamera()
+    }
+  }
+  const useCapturedPhoto = async () => {
+    if (!capturedPhoto) return
+    const selectedFile = capturedPhoto.file
+    setCameraMode('closed')
+    setCapturedPhoto(null)
+    setError(null)
+    setLocationMessage('')
+    setLatest(null)
+    if (preview) URL.revokeObjectURL(preview)
+    setFile(selectedFile)
+    setPreview(URL.createObjectURL(selectedFile))
+    await analyze(selectedFile)
+  }
+  const analyze = async (fileToAnalyze = file) => {
+    if (!fileToAnalyze) return
     setBusy(true)
     setError(null)
     try {
@@ -275,7 +383,7 @@ export function AnalysisPage() {
       setLocationMessage(location.message)
       const response = await predictCrop(
         api,
-        file,
+        fileToAnalyze,
         selectedCrop,
         location.coordinates,
         'analysis',
@@ -301,7 +409,13 @@ export function AnalysisPage() {
         <section className="card analysis-upload-card" aria-labelledby="analysis-upload-heading">
           <div className="card-heading"><div className="card-title" id="analysis-upload-heading">Crop image</div></div>
           <div className="analysis-image-preview">
-            {preview
+            {cameraMode === 'live' || cameraMode === 'requesting'
+              ? cameraMode === 'live'
+                ? <video className="analysis-camera-video" ref={videoRef} autoPlay playsInline muted aria-label="Live camera preview" />
+                : <div className="analysis-preview-empty" role="status">Starting camera…</div>
+              : cameraMode === 'captured' && capturedPhoto
+                ? <img src={capturedPhoto.url} alt="Captured crop leaf preview" />
+                : preview
               ? <img src={preview} alt="Selected crop leaf" />
               : record?.image_url
                 ? <img src={api.imageUrl(record.image_url)} alt="Previously analyzed crop leaf" />
@@ -310,17 +424,29 @@ export function AnalysisPage() {
           <div className="camera-actions analysis-actions">
             <input className="hidden-input" id="analysis-upload" type="file" accept="image/jpeg,image/png" onChange={onFile} />
             <label className="button" htmlFor="analysis-upload"><Upload size={14} />Upload image</label>
+            {cameraMode === 'closed' || cameraMode === 'error'
+              ? <button className="button" type="button" onClick={openCamera}><Camera size={14} />Capture Photo</button>
+              : cameraMode === 'captured'
+                ? <>
+                  <button className="button" type="button" onClick={openCamera}><RefreshCw size={14} />Retake</button>
+                  <button className="button primary" type="button" onClick={useCapturedPhoto} disabled={busy}><Check size={14} />Use Photo</button>
+                </>
+                : <>
+                  <button className="button" type="button" onClick={closeCamera}><X size={14} />Close camera</button>
+                  <button className="button primary" type="button" onClick={takePhoto} disabled={cameraMode !== 'live'}><Camera size={14} />Take Photo</button>
+                </>}
             <select className="select" aria-label="Crop type" value={selectedCrop} onChange={(event) => setSelectedCrop(event.target.value)} disabled={busy}>
               <option value="">Automatic Crop Detection</option>
               {SUPPORTED_CROPS.map((crop) => <option key={crop} value={crop}>{crop}</option>)}
             </select>
-            <button className="button primary" disabled={!file || busy} onClick={analyze}>
+            <button className="button primary" disabled={!file || busy} onClick={() => analyze()}>
               {busy ? <RefreshCw size={14} className="spin" /> : <Crosshair size={14} />}
               {busy ? 'Analyzing…' : 'Analyze image'}
             </button>
           </div>
           {file && <div className="card-subtitle analysis-file-name">{file.name} · {(file.size / (1024 * 1024)).toFixed(2)} MB</div>}
           {locationMessage && <div className="analysis-location-message" role="status">{locationMessage}</div>}
+          {cameraError && <div className="analysis-error" role="alert">{cameraError}</div>}
           {error && <div className="analysis-error" role="alert">{error.message || 'Analysis request failed.'}</div>}
         </section>
         <section className="card analysis-result-card" aria-labelledby="analysis-result-heading">
