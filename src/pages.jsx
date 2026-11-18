@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   AlertCircle, ArrowDownToLine, ArrowRight, Camera, Check, ChevronLeft,
   ChevronRight, CloudOff, Crosshair, FileImage, ImagePlus, Leaf,
@@ -142,12 +142,16 @@ export function MonitorPage() {
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [capturedPhoto, setCapturedPhoto] = useState(null)
+  const [captureBusy, setCaptureBusy] = useState(false)
+  const [captureError, setCaptureError] = useState('')
   const [cameraStatus, setCameraStatus] = useState('Connecting')
   const [cameraError, setCameraError] = useState('')
   const [streamAttempt, setStreamAttempt] = useState(0)
   const streamImageRef = useRef(null)
   const cameraTimeoutRef = useRef(null)
   const cameraStatusRef = useRef('Connecting')
+  const captureInProgressRef = useRef(false)
   const [locationMessage, setLocationMessage] = useState('')
   const latest = useLoad(() => getLatestDetection(api.detections), [])
   const navigate = useNavigate()
@@ -192,6 +196,41 @@ export function MonitorPage() {
     setPreview(URL.createObjectURL(selected))
   }
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview) }, [preview])
+  useEffect(() => () => {
+    if (capturedPhoto?.url) URL.revokeObjectURL(capturedPhoto.url)
+  }, [capturedPhoto])
+  const capturePhoto = async () => {
+    if (captureInProgressRef.current) return
+    captureInProgressRef.current = true
+    setCaptureBusy(true)
+    setCaptureError('')
+
+    try {
+      const endpoints = getEsp32CamEndpoints()
+      const blob = await fetchEsp32Photo(endpoints.capture)
+      if (blob.type.split(';')[0].trim().toLowerCase() !== 'image/jpeg') {
+        throw new Error('The ESP32-CAM did not return a JPEG image.')
+      }
+
+      const photoFile = new File(
+        [blob],
+        `esp32-crop-photo-${Date.now()}.jpg`,
+        { type: 'image/jpeg' },
+      )
+      const validationError = imageValidationError(photoFile)
+      if (validationError) throw new Error(validationError)
+
+      setCapturedPhoto({
+        file: photoFile,
+        url: URL.createObjectURL(photoFile),
+      })
+    } catch (cause) {
+      setCaptureError(cause.message || 'The ESP32-CAM photo could not be captured.')
+    } finally {
+      captureInProgressRef.current = false
+      setCaptureBusy(false)
+    }
+  }
   const analyze = async (fileToAnalyze = file) => {
     if (!fileToAnalyze) return
     setBusy(true); setError(null)
@@ -260,9 +299,28 @@ export function MonitorPage() {
             <span className="card-subtitle">Selected image</span>
             <img src={preview} alt="Selected crop image for analysis" />
           </div>}
+          {capturedPhoto && <div className="live-monitor-upload-preview">
+            <span className="card-subtitle">Captured photo</span>
+            <img src={capturedPhoto.url} alt="Captured ESP32-CAM crop photo" />
+          </div>}
           <div className="camera-actions live-monitor-actions">
             <input className="hidden-input" id="crop-upload" type="file" accept="image/jpeg,image/png" onChange={onFile} />
             <label className="button" htmlFor="crop-upload"><Upload size={14} />Upload image</label>
+            <button className="button" type="button" onClick={capturePhoto} disabled={captureBusy}>
+              {captureBusy ? <RefreshCw size={14} className="spin" /> : <Camera size={14} />}
+              {captureBusy ? 'Capturing…' : 'Capture Photo'}
+            </button>
+            {capturedPhoto && <button
+              className="button primary"
+              type="button"
+              disabled={captureBusy}
+              onClick={() => navigate('/analysis', {
+                state: {
+                  capturedPhoto: capturedPhoto.file,
+                  selectedCrop,
+                },
+              })}
+            >Analyze Captured Image</button>}
             {!cameraAvailable && streamUrl && <button className="button" type="button" onClick={() => {
               if (cameraStatusRef.current === 'Connecting') return
               setCameraError('')
@@ -279,6 +337,7 @@ export function MonitorPage() {
           {file && <div className="card-subtitle live-monitor-file">{file.name} · {(file.size / (1024 * 1024)).toFixed(2)} MB</div>}
           {locationMessage && <div className="analysis-location-message" role="status">{locationMessage}</div>}
           {(cameraError || endpointError) && <div className="analysis-error" role="alert">{cameraError || endpointError}</div>}
+          {captureError && <div className="analysis-error" role="alert">{captureError}</div>}
           <ErrorNotice error={error} />
         </div>
         <div className="live-monitor-side">
@@ -308,6 +367,10 @@ export function MonitorPage() {
 }
 
 export function AnalysisPage() {
+  const routeLocation = useLocation()
+  const navigate = useNavigate()
+  const routedCapture = routeLocation.state?.capturedPhoto
+  const routedCrop = routeLocation.state?.selectedCrop || ''
   const [latest, setLatest] = useState(readStoredAnalysis)
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState('')
@@ -316,6 +379,7 @@ export function AnalysisPage() {
   const [capturedPhoto, setCapturedPhoto] = useState(null)
   const captureAbortRef = useRef(null)
   const captureRequestRef = useRef(0)
+  const routedCaptureRef = useRef(null)
   const [selectedCrop, setSelectedCrop] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -397,7 +461,7 @@ export function AnalysisPage() {
     setPreview(URL.createObjectURL(selectedFile))
     await analyze(selectedFile)
   }
-  const analyze = async (fileToAnalyze = file) => {
+  const analyze = useCallback(async (fileToAnalyze = file, cropToAnalyze = selectedCrop) => {
     if (!fileToAnalyze) return
     setBusy(true)
     setError(null)
@@ -407,14 +471,40 @@ export function AnalysisPage() {
       const response = await predictCrop(
         api,
         fileToAnalyze,
-        selectedCrop,
+        cropToAnalyze,
         location.coordinates,
         'analysis',
       )
       setLatest(response)
       sessionStorage.setItem('latestAnalysis', JSON.stringify(response))
     } catch (cause) { setError(cause) } finally { setBusy(false) }
-  }
+  }, [file, selectedCrop])
+  useEffect(() => {
+    if (!(routedCapture instanceof File) || routedCaptureRef.current === routedCapture) return
+    routedCaptureRef.current = routedCapture
+
+    setFile(routedCapture)
+    setPreview(URL.createObjectURL(routedCapture))
+    setLatest(null)
+    setCameraMode('closed')
+    setCapturedPhoto(null)
+    setError(null)
+    setCameraError('')
+    setLocationMessage('')
+    setSelectedCrop(routedCrop)
+    navigate(`${routeLocation.pathname}${routeLocation.search}`, {
+      replace: true,
+      state: null,
+    })
+    void analyze(routedCapture, routedCrop)
+  }, [
+    analyze,
+    navigate,
+    routeLocation.pathname,
+    routeLocation.search,
+    routedCapture,
+    routedCrop,
+  ])
   const recommendations = record?.treatment_recommendations ?? record?.recommendations
   const recommendationValues = Array.isArray(recommendations)
     ? recommendations
