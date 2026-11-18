@@ -6,7 +6,7 @@ import {
   MapPin, RefreshCw, Search, ShieldAlert, Upload,
 } from 'lucide-react'
 import { api, exportDetections } from './api.js'
-import { checkEsp32Status, fetchEsp32Photo, getEsp32CamEndpoints } from './camera.js'
+import { fetchEsp32Photo, getEsp32CamEndpoints } from './camera.js'
 import { getCurrentLocation, hasValidCoordinates } from './location.js'
 import { getLatestDetection } from './monitoring.js'
 import { SUPPORTED_CROPS } from './supportedCrops.js'
@@ -144,7 +144,6 @@ export function MonitorPage() {
   const [error, setError] = useState(null)
   const [cameraStatus, setCameraStatus] = useState('Connecting')
   const [cameraError, setCameraError] = useState('')
-  const [statusError, setStatusError] = useState('')
   const [streamAttempt, setStreamAttempt] = useState(0)
   const streamImageRef = useRef(null)
   const cameraTimeoutRef = useRef(null)
@@ -161,7 +160,6 @@ export function MonitorPage() {
     endpointError = cause.message || 'Camera backend URL is not configured.'
   }
   const streamUrl = cameraUrls?.stream || ''
-  const statusUrl = cameraUrls?.status || ''
   useEffect(() => {
     if (!streamUrl) return undefined
     cameraTimeoutRef.current = window.setTimeout(() => {
@@ -179,21 +177,6 @@ export function MonitorPage() {
       }
     }
   }, [streamUrl, streamAttempt])
-  useEffect(() => {
-    if (!statusUrl) return undefined
-    const controller = new AbortController()
-    let active = true
-    const timeout = window.setTimeout(() => controller.abort(), 6000)
-    checkEsp32Status(statusUrl, { signal: controller.signal })
-      .then(() => { if (active) setStatusError('') })
-      .catch((cause) => { if (active) setStatusError(cause.message || 'ESP32-CAM /status could not be checked.') })
-      .finally(() => window.clearTimeout(timeout))
-    return () => {
-      active = false
-      window.clearTimeout(timeout)
-      controller.abort()
-    }
-  }, [statusUrl, streamAttempt])
   const latestRecord = result || latest.data
   const record = latestRecord?.crop_only ? null : latestRecord
   const onFile = (event) => {
@@ -281,12 +264,12 @@ export function MonitorPage() {
             <input className="hidden-input" id="crop-upload" type="file" accept="image/jpeg,image/png" onChange={onFile} />
             <label className="button" htmlFor="crop-upload"><Upload size={14} />Upload image</label>
             {!cameraAvailable && streamUrl && <button className="button" type="button" onClick={() => {
+              if (cameraStatusRef.current === 'Connecting') return
               setCameraError('')
-              setStatusError('')
               cameraStatusRef.current = 'Connecting'
               setCameraStatus('Connecting')
               setStreamAttempt((attempt) => attempt + 1)
-            }}>Retry stream</button>}
+            }} disabled={cameraStatus === 'Connecting'}>Retry stream</button>}
             <select className="select" aria-label="Crop type" value={selectedCrop} onChange={(event) => setSelectedCrop(event.target.value)} disabled={busy}>
               <option value="">Automatic Crop Detection</option>
               {SUPPORTED_CROPS.map((crop) => <option key={crop} value={crop}>{crop}</option>)}
@@ -296,7 +279,6 @@ export function MonitorPage() {
           {file && <div className="card-subtitle live-monitor-file">{file.name} · {(file.size / (1024 * 1024)).toFixed(2)} MB</div>}
           {locationMessage && <div className="analysis-location-message" role="status">{locationMessage}</div>}
           {(cameraError || endpointError) && <div className="analysis-error" role="alert">{cameraError || endpointError}</div>}
-          {statusError && <div className="analysis-location-message" role="status">ESP32-CAM /status could not be verified: {statusError}</div>}
           <ErrorNotice error={error} />
         </div>
         <div className="live-monitor-side">

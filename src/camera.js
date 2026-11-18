@@ -54,7 +54,6 @@ export function getEsp32CamEndpoints() {
   return {
     stream: `${base}/stream`,
     capture: `${base}/capture`,
-    status: `${base}/status`,
   }
 }
 
@@ -80,14 +79,4 @@ export async function fetchEsp32Photo(url, options = {}) {
   }
 
   return blob
-}
-
-export async function checkEsp32Status(url, options = {}) {
-  const response = await requestCameraEndpoint(
-    url,
-    '/status',
-    options,
-  )
-
-  return response.json()
 }
