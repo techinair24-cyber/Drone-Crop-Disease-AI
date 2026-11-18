@@ -142,25 +142,23 @@ export function MonitorPage() {
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
-  const [cameraEndpoint] = useState(() => localStorage.getItem('cameraEndpoint')?.trim() || '')
-  const [cameraStatus, setCameraStatus] = useState(cameraEndpoint ? 'Connecting' : 'Not configured')
+  const [cameraStatus, setCameraStatus] = useState('Connecting')
   const [cameraError, setCameraError] = useState('')
   const [statusError, setStatusError] = useState('')
   const [streamAttempt, setStreamAttempt] = useState(0)
   const streamImageRef = useRef(null)
   const cameraTimeoutRef = useRef(null)
-  const cameraStatusRef = useRef(cameraEndpoint ? 'Connecting' : 'Not configured')
+  const cameraStatusRef = useRef('Connecting')
   const [locationMessage, setLocationMessage] = useState('')
   const latest = useLoad(() => getLatestDetection(api.detections), [])
   const navigate = useNavigate()
   let cameraUrls = null
   let endpointError = ''
-  if (cameraEndpoint) {
-    try {
-      cameraUrls = getEsp32CamEndpoints(cameraEndpoint)
-    } catch (cause) {
-      endpointError = cause.message || 'The configured ESP32-CAM endpoint is invalid.'
-    }
+
+  try {
+    cameraUrls = getEsp32CamEndpoints()
+  } catch (cause) {
+    endpointError = cause.message || 'Camera backend URL is not configured.'
   }
   const streamUrl = cameraUrls?.stream || ''
   const statusUrl = cameraUrls?.status || ''
@@ -229,9 +227,10 @@ export function MonitorPage() {
     } catch (cause) { setError(cause) } finally { setBusy(false) }
   }
   const cameraAvailable = Boolean(streamUrl) && cameraStatus === 'Available'
-  const cameraPlaceholder = !cameraEndpoint
-    ? 'Configure the ESP32-CAM endpoint in Settings'
-    : endpointError || (cameraStatus === 'Connecting' ? 'Connecting to ESP32-CAM /stream' : 'ESP32-CAM /stream unavailable')
+  const cameraPlaceholder = endpointError ||
+    (cameraStatus === 'Connecting'
+      ? 'Connecting to camera through backend'
+      : 'ESP32-CAM unavailable')
   return <>
     <div className="monitor-page">
       <div className="monitor-page-heading"><h1 className="page-title">Live monitoring</h1></div>
@@ -272,7 +271,6 @@ export function MonitorPage() {
             {(!streamUrl || !cameraAvailable) && <div className="camera-placeholder">
               <Camera size={27} />
               <strong>{cameraPlaceholder}</strong>
-              {!cameraEndpoint && <Link className="button ghost" to="/settings">Open Settings</Link>}
             </div>}
           </div>
           {preview && <div className="live-monitor-upload-preview">
@@ -331,7 +329,6 @@ export function AnalysisPage() {
   const [latest, setLatest] = useState(readStoredAnalysis)
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState('')
-  const [cameraEndpoint] = useState(() => localStorage.getItem('cameraEndpoint')?.trim() || '')
   const [cameraMode, setCameraMode] = useState('closed')
   const [cameraError, setCameraError] = useState('')
   const [capturedPhoto, setCapturedPhoto] = useState(null)
@@ -376,7 +373,7 @@ export function AnalysisPage() {
     let timeout
     let controller
     try {
-      const endpoints = getEsp32CamEndpoints(cameraEndpoint)
+      const endpoints = getEsp32CamEndpoints()
       controller = new AbortController()
       captureAbortRef.current = controller
       timeout = window.setTimeout(() => controller.abort(), 10_000)
@@ -486,7 +483,6 @@ export function AnalysisPage() {
           {file && <div className="card-subtitle analysis-file-name">{file.name} · {(file.size / (1024 * 1024)).toFixed(2)} MB</div>}
           {locationMessage && <div className="analysis-location-message" role="status">{locationMessage}</div>}
           {cameraError && <div className="analysis-error" role="alert">{cameraError}</div>}
-          {cameraMode === 'error' && !cameraEndpoint && <Link className="button ghost" to="/settings">Configure ESP32-CAM in Settings</Link>}
           {error && <div className="analysis-error" role="alert">{error.message || 'Analysis request failed.'}</div>}
         </section>
         <section className="card analysis-result-card" aria-labelledby="analysis-result-heading">
@@ -919,7 +915,6 @@ export function RecommendationsPage() {
 export function SettingsPage() {
   const [saved, setSaved] = useState(false)
   const [backendUrl, setBackendUrl] = useState(api.baseUrl)
-  const [cameraEndpoint, setCameraEndpoint] = useState(localStorage.getItem('cameraEndpoint') || '')
   const [mapStyle, setMapStyle] = useState(localStorage.getItem('mapStyle') || 'standard')
   const [formError, setFormError] = useState('')
   const connection = useLoad(() => api.health(), [])
@@ -940,7 +935,6 @@ export function SettingsPage() {
     try {
       if (normalizedUrl === api.defaultBaseUrl) localStorage.removeItem('apiBaseUrl')
       else localStorage.setItem('apiBaseUrl', normalizedUrl)
-      localStorage.setItem('cameraEndpoint', cameraEndpoint.trim())
       localStorage.setItem('mapStyle', mapStyle)
       setBackendUrl(normalizedUrl)
       setFormError('')
@@ -973,7 +967,12 @@ export function SettingsPage() {
         </section>
         <section className="card settings-card" aria-labelledby="settings-preferences-title">
           <div className="card-heading"><div className="card-title" id="settings-preferences-title">Preferences</div></div>
-          <label className="form-row"><span className="form-label">Camera endpoint</span><input className="field form-input" type="url" value={cameraEndpoint} onChange={(event) => setCameraEndpoint(event.target.value)} /><span className="form-help">Enter the ESP32-CAM stream URL (for example, its port-81 /stream route). Live Monitoring uses that stream; AI Analysis uses port 80 /capture and /status. Browser CORS, local-network, and HTTPS mixed-content rules may block access.</span></label>
+          <div className="form-row">
+            <span className="form-label">Camera connection</span>
+            <span className="form-help">
+              ESP32-CAM connects through the secure backend proxy. No local camera URL is required.
+            </span>
+          </div>
           <label className="form-row"><span className="form-label">Map tiles</span><select className="select form-input" value={mapStyle} onChange={(event) => setMapStyle(event.target.value)}><option value="standard">Standard (OpenStreetMap)</option></select></label>
         </section>
         <div className="settings-actions">
