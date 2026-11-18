@@ -10,9 +10,10 @@ from io import BytesIO
 from pathlib import Path
 from typing import Annotated, Literal
 
+import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from PIL import Image, UnidentifiedImageError
 
 from .config import get_settings
@@ -37,6 +38,36 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 store = DetectionStore(settings.database_path, settings.uploads_path)
+
+CAMERA_BRIDGE_URL = os.getenv("CAMERA_BRIDGE_URL", "").strip().rstrip("/")
+CAMERA_BRIDGE_TOKEN = os.getenv("CAMERA_BRIDGE_TOKEN", "").strip()
+
+
+def _camera_headers() -> dict:
+    if not CAMERA_BRIDGE_URL or not CAMERA_BRIDGE_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail="Camera bridge is not configured.",
+        )
+
+    return {"X-Camera-Token": CAMERA_BRIDGE_TOKEN}
+
+
+async def _camera_is_available() -> bool:
+    if not CAMERA_BRIDGE_URL or not CAMERA_BRIDGE_TOKEN:
+        return False
+
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            response = await client.get(
+                f"{CAMERA_BRIDGE_URL}/camera/status",
+                headers=_camera_headers(),
+            )
+            response.raise_for_status()
+            return True
+    except (httpx.HTTPError, HTTPException):
+        return False
+
 
 models_path = Path(__file__).resolve().parents[1] / "models"
 crop_model_path = models_path / "crop_classifier.tflite"
@@ -127,10 +158,116 @@ def health() -> dict:
     }
 
 
+@app.get("/api/camera/status")
+async def camera_status():
+    headers = _camera_headers()
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(
+                f"{CAMERA_BRIDGE_URL}/camera/status",
+                headers=headers,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    except httpx.HTTPError as exc:
+        logger.warning("Camera status request failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Could not reach the camera bridge.",
+        ) from exc
+
+
+@app.get("/api/camera/capture")
+async def camera_capture():
+    headers = _camera_headers()
+
+    try:
+        async with httpx.AsyncClient(timeout=25) as client:
+            response = await client.get(
+                f"{CAMERA_BRIDGE_URL}/camera/capture",
+                headers=headers,
+            )
+            response.raise_for_status()
+
+            return Response(
+                content=response.content,
+                media_type=response.headers.get("content-type", "image/jpeg"),
+                headers={"Cache-Control": "no-store"},
+            )
+
+    except httpx.HTTPError as exc:
+        logger.warning("Camera capture failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Could not capture an image from the camera.",
+        ) from exc
+
+
+@app.get("/api/camera/stream")
+async def camera_stream():
+    headers = _camera_headers()
+    client = httpx.AsyncClient(timeout=None)
+
+    try:
+        request = client.build_request(
+            "GET",
+            f"{CAMERA_BRIDGE_URL}/camera/stream",
+            headers=headers,
+        )
+        upstream = await client.send(request, stream=True)
+
+        if upstream.status_code != 200:
+            await upstream.aclose()
+            await client.aclose()
+            raise HTTPException(
+                status_code=502,
+                detail="Camera stream is unavailable.",
+            )
+
+        content_type = upstream.headers.get(
+            "content-type",
+            "multipart/x-mixed-replace",
+        )
+
+        async def relay_stream():
+            try:
+                async for chunk in upstream.aiter_raw():
+                    yield chunk
+            finally:
+                await upstream.aclose()
+                await client.aclose()
+
+        return StreamingResponse(
+            relay_stream(),
+            headers={
+                "Content-Type": content_type,
+                "Cache-Control": "no-store",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        await client.aclose()
+        logger.warning("Camera stream connection failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Could not connect to the camera stream.",
+        ) from exc
+
+
 @app.get("/api/status", response_model=SystemStatus)
-def system_status() -> dict:
+async def system_status() -> dict:
+    camera_available = await _camera_is_available()
+
     return {
-        "camera": {"available": False, "status": "unavailable"},
+        "camera": {
+            "available": camera_available,
+            "status": "available" if camera_available else "unavailable",
+        },
         "gps": {"available": False, "status": "unavailable"},
         "model": _analysis_model_status(),
         "telemetry": {"available": False, "status": "unavailable"},

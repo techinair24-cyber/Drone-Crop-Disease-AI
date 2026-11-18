@@ -144,6 +144,20 @@ def test_status_never_fabricates_hardware_connections(client):
     assert body["telemetry"]["available"] is False
 
 
+def test_camera_endpoints_report_unconfigured_bridge(client, monkeypatch):
+    monkeypatch.setattr(main, "CAMERA_BRIDGE_URL", "")
+    monkeypatch.setattr(main, "CAMERA_BRIDGE_TOKEN", "")
+
+    status_response = client.get("/api/camera/status")
+    capture_response = client.get("/api/camera/capture")
+    stream_response = client.get("/api/camera/stream")
+
+    assert status_response.status_code == 503
+    assert status_response.json() == {"detail": "Camera bridge is not configured."}
+    assert capture_response.status_code == 503
+    assert stream_response.status_code == 503
+
+
 def test_empty_history_and_stats(client):
     assert client.get("/api/detections").json() == {
         "items": [],
