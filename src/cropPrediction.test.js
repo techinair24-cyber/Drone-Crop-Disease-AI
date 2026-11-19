@@ -54,7 +54,9 @@ test('rejects Object (Non-Leaf) without requesting prediction', async () => {
 
   await assert.rejects(
     predictCrop(api, file, 'Object', location),
-    { message: 'Image Rejected: No crop leaf selected for analysis.' }
+    {
+      message: 'Image Rejected: Invalid image for crop analysis. Please upload or capture a valid crop leaf image.',
+    }
   )
   assert.equal(api.calls.length, 0)
 })

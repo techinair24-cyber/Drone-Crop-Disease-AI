@@ -2,7 +2,9 @@ import { SUPPORTED_CROPS } from './supportedCrops.js'
 
 export function getCropSelectionError(selectedCrop) {
   if (selectedCrop === 'Object') {
-    return new Error('Image Rejected: No crop leaf selected for analysis.')
+    return new Error(
+      'Image Rejected: Invalid image for crop analysis. Please upload or capture a valid crop leaf image.'
+    )
   }
   if (selectedCrop && !SUPPORTED_CROPS.includes(selectedCrop)) {
     return new Error('The selected crop is not supported.')
