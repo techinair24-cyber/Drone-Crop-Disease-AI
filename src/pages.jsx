@@ -536,7 +536,7 @@ export function AnalysisPage() {
             <input className="hidden-input" id="analysis-upload" type="file" accept="image/jpeg,image/png" onChange={onFile} />
             <label className="button" htmlFor="analysis-upload"><Upload size={14} />Upload image</label>
             {cameraMode === 'closed' || cameraMode === 'error'
-              ? <button className="button" type="button" onClick={capturePhoto}><Camera size={14} />Capture Photo</button>
+              ? null
               : cameraMode === 'captured'
                 ? <>
                   <button className="button" type="button" onClick={capturePhoto}><RefreshCw size={14} />Retake</button>
