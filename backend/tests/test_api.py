@@ -9,7 +9,6 @@ from PIL import Image
 
 from backend.app import main
 from backend.app.crop_adapter import SUPPORTED_CROPS
-from backend.app.gemini import GeminiAnalysisError
 from backend.app.storage import DetectionStore
 
 
@@ -269,6 +268,7 @@ def test_latest_uploaded_image_is_retrievable(client, monkeypatch):
         response = client.post(
             "/api/predict",
             files={"file": (f"{color}.jpg", image_bytes, "image/jpeg")},
+            data={"crop_name": "Hibiscus"},
         )
         assert response.status_code == 201
 
@@ -307,13 +307,14 @@ def test_predict_refuses_when_model_is_not_configured(client):
     assert "model is not configured" in response.json()["detail"]
 
 
-def test_predict_refuses_when_either_model_is_unavailable(client, monkeypatch):
+def test_predict_refuses_when_health_model_is_unavailable(client, monkeypatch):
     monkeypatch.setattr(main, "crop_model", ReadyCropModel())
     monkeypatch.setattr(main, "health_model", UnavailableModel())
 
     response = client.post(
         "/api/predict",
         files={"file": ("leaf.png", make_image(), "image/png")},
+        data={"crop_name": "Hibiscus"},
     )
 
     assert response.status_code == 503
@@ -364,6 +365,7 @@ def test_prediction_is_persisted_and_returned_with_location(
             )
         },
         data={
+            "crop_name": "Hibiscus",
             "latitude": "12.4",
             "longitude": "76.2",
             "gps_fix_valid": "true",
@@ -376,7 +378,7 @@ def test_prediction_is_persisted_and_returned_with_location(
 
     detection = response.json()
     assert detection["crop_name"] == "Hibiscus"
-    assert detection["crop_confidence"] == 0.97
+    assert detection["crop_confidence"] is None
     assert detection["health_status"] == "Unhealthy"
     assert detection["health_confidence"] == 0.84
     assert detection["health_probabilities"] == {
@@ -427,6 +429,7 @@ def test_prediction_saves_coordinate_pair_without_gps_metadata(
             )
         },
         data={
+            "crop_name": "Hibiscus",
             "latitude": "12.4",
             "longitude": "76.2",
         },
@@ -482,7 +485,7 @@ def test_predict_classifies_all_supported_crops_and_lists_history(
         detection = response.json()
         assert detection["crop_name"] == crop
         assert detection["health_status"] == "Unhealthy"
-        assert detection["crop_confidence"] == 0.97
+        assert detection["crop_confidence"] is None
         assert detection["health_confidence"] == 0.84
         assert detection["health_probabilities"] == {
             "Healthy": 0.16,
@@ -510,7 +513,7 @@ def test_recommendations_only_include_real_sourced_unhealthy_images(
     apple = client.post(
         "/api/predict",
         files={"file": ("apple.png", make_image(), "image/png")},
-        data={"source": "analysis"},
+        data={"crop_name": "Apple", "source": "analysis"},
     )
     assert apple.status_code == 201
     assert apple.json()["source"] == "analysis"
@@ -519,7 +522,7 @@ def test_recommendations_only_include_real_sourced_unhealthy_images(
     chilli = client.post(
         "/api/predict",
         files={"file": ("chilli.png", make_image("PNG", "red"), "image/png")},
-        data={"source": "live_monitoring"},
+        data={"crop_name": "Chilli", "source": "live_monitoring"},
     )
     assert chilli.status_code == 201
     assert chilli.json()["source"] == "live_monitoring"
@@ -530,7 +533,7 @@ def test_recommendations_only_include_real_sourced_unhealthy_images(
     healthy = client.post(
         "/api/predict",
         files={"file": ("tomato.png", make_image("PNG", "yellow"), "image/png")},
-        data={"source": "analysis"},
+        data={"crop_name": "Tomato", "source": "analysis"},
     )
     assert healthy.status_code == 201
 
@@ -607,7 +610,7 @@ def test_healthy_prediction_skips_gemini(client, monkeypatch):
     response = client.post(
         "/api/predict",
         files={"file": ("apple.png", make_image(), "image/png")},
-        data={"source": "analysis"},
+        data={"crop_name": "Apple", "source": "analysis"},
     )
 
     assert response.status_code == 201
@@ -616,7 +619,7 @@ def test_healthy_prediction_skips_gemini(client, monkeypatch):
     assert calls == []
 
 
-def test_unhealthy_prediction_saves_image_based_gemini_analysis_and_retries(
+def test_unhealthy_prediction_defers_gemini_analysis_until_retry(
     client, monkeypatch
 ):
     install_ready_models(monkeypatch, crop_name="Apple")
@@ -652,26 +655,25 @@ def test_unhealthy_prediction_saves_image_based_gemini_analysis_and_retries(
             model_name,
             detection_id,
         ))
-        if len(calls) == 1:
-            raise GeminiAnalysisError("Gemini analysis timed out. You can retry.")
         return analysis
 
     monkeypatch.setattr(main, "analyze_leaf_image", analyze)
     prediction = client.post(
         "/api/predict",
         files={"file": ("apple.png", image_bytes, "image/png")},
-        data={"source": "live_monitoring"},
+        data={"crop_name": "Apple", "source": "live_monitoring"},
     )
 
     assert prediction.status_code == 201
     detection = prediction.json()
     assert detection["health_status"] == "Unhealthy"
-    assert detection["gemini_status"] == "failed"
-    assert detection["gemini_error"] == "Gemini analysis timed out. You can retry."
+    assert detection["gemini_status"] == "pending"
+    assert detection["gemini_analysis"] is None
+    assert calls == []
     detection_id = detection["id"]
 
     recommendations = client.get("/api/recommendations").json()
-    assert recommendations["items"][0]["gemini_status"] == "failed"
+    assert recommendations["items"][0]["gemini_status"] == "pending"
 
     retried = client.post(
         f"/api/detections/{detection_id}/gemini-analysis/retry"
@@ -679,7 +681,7 @@ def test_unhealthy_prediction_saves_image_based_gemini_analysis_and_retries(
     assert retried.status_code == 200
     assert retried.json()["gemini_status"] == "completed"
     assert retried.json()["gemini_analysis"] == analysis
-    assert len(calls) == 2
+    assert len(calls) == 1
     assert calls[0] == (
         image_bytes,
         "Apple",
@@ -695,7 +697,7 @@ def test_unhealthy_prediction_saves_image_based_gemini_analysis_and_retries(
     )
     assert cached.status_code == 200
     assert cached.json()["gemini_analysis"] == analysis
-    assert len(calls) == 2
+    assert len(calls) == 1
 
 
 def test_predict_rejects_unknown_detection_source(client, monkeypatch):
@@ -713,6 +715,7 @@ def test_unhealthy_recommendation_review_is_persisted(client, monkeypatch):
     prediction = client.post(
         "/api/predict",
         files={"file": ("apple.png", make_image(), "image/png")},
+        data={"crop_name": "Apple"},
     )
     assert prediction.status_code == 201
     detection = prediction.json()
@@ -740,6 +743,7 @@ def test_healthy_detection_cannot_be_marked_as_treatment_reviewed(
     prediction = client.post(
         "/api/predict",
         files={"file": ("tomato.png", make_image(), "image/png")},
+        data={"crop_name": "Tomato"},
     )
     assert prediction.status_code == 201
     assert prediction.json()["recommendation_reviewed"] is False
@@ -797,6 +801,35 @@ def test_predict_rejects_unsupported_crop_selection(client):
 
     assert response.status_code == 422
     assert "Unsupported crop" in response.json()["detail"]
+
+
+def test_predict_requires_a_crop_selection(client, monkeypatch):
+    install_ready_models(monkeypatch)
+
+    response = client.post(
+        "/api/predict",
+        files={"file": ("leaf.png", make_image(), "image/png")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Please select a valid crop before analyzing."
+    )
+
+
+def test_predict_does_not_require_crop_model(client, monkeypatch):
+    monkeypatch.setattr(main, "crop_model", UnavailableModel())
+    monkeypatch.setattr(main, "health_model", ReadyHealthModel())
+
+    response = client.post(
+        "/api/predict",
+        files={"file": ("leaf.png", make_image(), "image/png")},
+        data={"crop_name": "Hibiscus"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["crop_name"] == "Hibiscus"
+    assert response.json()["crop_confidence"] is None
 
 
 def test_predict_uses_selected_strawberry_when_crop_model_disagrees(

@@ -10,7 +10,7 @@ import { fetchEsp32Photo, getEsp32CamEndpoints } from './camera.js'
 import { getCurrentLocation, hasValidCoordinates } from './location.js'
 import { getLatestDetection } from './monitoring.js'
 import { SUPPORTED_CROPS } from './supportedCrops.js'
-import { predictCrop } from './cropPrediction.js'
+import { getCropSelectionError, predictCrop } from './cropPrediction.js'
 import { getCropRecommendation, getDetectionHealthStatus } from './recommendationKnowledge.js'
 
 const ActivityChart = lazy(() => import('./ActivityChart.jsx'))
@@ -233,6 +233,13 @@ export function MonitorPage() {
   }
   const analyze = async (fileToAnalyze = file) => {
     if (!fileToAnalyze) return
+    const selectionError = getCropSelectionError(selectedCrop)
+    if (selectionError) {
+      setError(selectionError)
+      setResult(null)
+      setLocationMessage('')
+      return
+    }
     setBusy(true); setError(null)
     try {
       const location = await getCurrentLocation()
@@ -331,6 +338,7 @@ export function MonitorPage() {
             <select className="select" aria-label="Crop type" value={selectedCrop} onChange={(event) => setSelectedCrop(event.target.value)} disabled={busy}>
               <option value="">Automatic Crop Detection</option>
               {SUPPORTED_CROPS.map((crop) => <option key={crop} value={crop}>{crop}</option>)}
+              <option value="Object">Object (Non-Leaf)</option>
             </select>
             <button className="button primary" disabled={!file || busy} onClick={() => analyze()}>{busy ? <RefreshCw size={14} className="spin" /> : <Crosshair size={14} />}{busy ? 'Analyzing…' : 'Analyze image'}</button>
           </div>
@@ -463,6 +471,13 @@ export function AnalysisPage() {
   }
   const analyze = useCallback(async (fileToAnalyze = file, cropToAnalyze = selectedCrop) => {
     if (!fileToAnalyze) return
+    const selectionError = getCropSelectionError(cropToAnalyze)
+    if (selectionError) {
+      setError(selectionError)
+      setLatest(null)
+      setLocationMessage('')
+      return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -546,6 +561,7 @@ export function AnalysisPage() {
             <select className="select" aria-label="Crop type" value={selectedCrop} onChange={(event) => setSelectedCrop(event.target.value)} disabled={busy}>
               <option value="">Automatic Crop Detection</option>
               {SUPPORTED_CROPS.map((crop) => <option key={crop} value={crop}>{crop}</option>)}
+              <option value="Object">Object (Non-Leaf)</option>
             </select>
             <button className="button primary" disabled={!file || busy} onClick={() => analyze()}>
               {busy ? <RefreshCw size={14} className="spin" /> : <Crosshair size={14} />}

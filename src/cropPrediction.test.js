@@ -49,6 +49,16 @@ test('sends each manually selected crop through full prediction with its source'
   }
 })
 
+test('rejects Object (Non-Leaf) without requesting prediction', async () => {
+  const api = createApi('Apple')
+
+  await assert.rejects(
+    predictCrop(api, file, 'Object', location),
+    { message: 'Image Rejected: No crop leaf selected for analysis.' }
+  )
+  assert.equal(api.calls.length, 0)
+})
+
 test('sends automatic selection through full crop and health prediction', async () => {
   for (const crop of SUPPORTED_CROPS) {
     const api = createApi(crop)

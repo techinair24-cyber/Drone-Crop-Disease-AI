@@ -1,5 +1,15 @@
 import { SUPPORTED_CROPS } from './supportedCrops.js'
 
+export function getCropSelectionError(selectedCrop) {
+  if (selectedCrop === 'Object') {
+    return new Error('Image Rejected: No crop leaf selected for analysis.')
+  }
+  if (selectedCrop && !SUPPORTED_CROPS.includes(selectedCrop)) {
+    return new Error('The selected crop is not supported.')
+  }
+  return null
+}
+
 export async function predictCrop(
   api,
   file,
@@ -7,9 +17,8 @@ export async function predictCrop(
   location,
   source = 'analysis',
 ) {
-  if (selectedCrop && !SUPPORTED_CROPS.includes(selectedCrop)) {
-    throw new Error('The selected crop is not supported.')
-  }
+  const selectionError = getCropSelectionError(selectedCrop)
+  if (selectionError) throw selectionError
 
   const result = await api.predict(file, selectedCrop, location, source)
   if (!SUPPORTED_CROPS.includes(result?.crop_name)) {

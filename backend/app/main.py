@@ -663,33 +663,36 @@ async def predict(
             detail="Only JPG, JPEG, and PNG images are supported.",
         )
 
-    if not crop_model.available or not health_model.available:
+    if not health_model.available:
         raise HTTPException(
             status_code=503,
-            detail=_analysis_model_status()["message"],
+            detail=health_model.status()["message"],
         )
 
     try:
-        crop_result = crop_model.predict(image_bytes)
-        detected_crop = crop_result["crop_name"]
         prediction_crop = next(
             (
                 name
                 for name in SUPPORTED_CROPS
                 if crop_name is not None and name.casefold() == crop_name.casefold()
             ),
-            detected_crop,
+            None,
         )
+        if prediction_crop is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Please select a valid crop before analyzing."
+            )
         result = health_model.predict(image_bytes, prediction_crop)
     except HTTPException:
         raise
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("Crop and health inference failed.")
+        logger.exception("Health inference failed.")
         raise HTTPException(
             status_code=500,
-            detail="Crop and health inference failed.",
+            detail="Health inference failed.",
         ) from exc
 
     extension = ".jpg" if image_format == "JPEG" else ".png"
@@ -703,11 +706,7 @@ async def predict(
             "id": str(uuid.uuid4()),
             "filename": filename,
             "crop_name": prediction_crop,
-            "crop_confidence": (
-                crop_result["prediction_score"]
-                if prediction_crop.casefold() == detected_crop.casefold()
-                else None
-            ),
+            "crop_confidence": None,
             "health_status": result["health_status"],
             "health_confidence": result["health_confidence"],
             "health_probabilities": result["health_probabilities"],
@@ -731,12 +730,8 @@ async def predict(
                 captured_at.astimezone(timezone.utc).isoformat()
                 if captured_at else None
             ),
-            "model_name": (
-                "10-Crop MobileNetV2 Lite + Shared Health LiteRT"
-            ),
-            "model_version": (
-                f"crop-{crop_model.version}; health-{health_model.version}"
-            ),
+            "model_name": "Shared Health LiteRT",
+            "model_version": f"health-{health_model.version}",
             "top_predictions": [
                 {"label": name, "score": confidence}
                 for name, confidence in result["health_probabilities"].items()
@@ -757,9 +752,6 @@ async def predict(
         record["id"],
         record["classification"],
     )
-
-    if record["health_status"] == "Unhealthy":
-        record = await _run_gemini_analysis(record["id"])
 
     return record
 
