@@ -69,30 +69,31 @@ test('records Monitor predictions with live-monitoring source', async () => {
 })
 
 test('sends an ESP32-CAM capture through the existing analysis prediction pipeline', async () => {
-  const endpoints = getEsp32CamEndpoints('http://esp.local/stream')
-  const image = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' })
-  const capturedBlob = await fetchEsp32Photo(endpoints.capture, {
-    fetchImpl: async (url) => {
-      assert.equal(url, 'http://esp.local:80/capture')
-      return new Response(image, { status: 200 })
-    },
-  })
-  const capturedFile = new File([capturedBlob], 'esp32-crop-photo.jpg', { type: capturedBlob.type })
   const originalFetch = globalThis.fetch
   const originalStorage = globalThis.localStorage
   let predictionRequest
   globalThis.localStorage = { getItem: () => null }
-  globalThis.fetch = async (url, options) => {
-    predictionRequest = { url, options }
-    return new Response(JSON.stringify({
-      crop_name: 'Apple',
-      crop_confidence: 0.95,
-      health_status: 'Healthy',
-      health_confidence: 0.8,
-      health_probabilities: { Healthy: 0.8, Unhealthy: 0.2 },
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-  }
   try {
+    const endpoints = getEsp32CamEndpoints()
+    const image = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: 'image/jpeg' })
+    const capturedBlob = await fetchEsp32Photo(endpoints.capture, {
+      fetchImpl: async (url) => {
+        assert.equal(url, `${api.defaultBaseUrl}/api/camera/capture`)
+        return new Response(image, { status: 200 })
+      },
+    })
+    const capturedFile = new File([capturedBlob], 'esp32-crop-photo.jpg', { type: capturedBlob.type })
+    globalThis.fetch = async (url, options) => {
+      predictionRequest = { url, options }
+      return new Response(JSON.stringify({
+        crop_name: 'Apple',
+        crop_confidence: 0.95,
+        health_status: 'Healthy',
+        health_confidence: 0.8,
+        health_probabilities: { Healthy: 0.8, Unhealthy: 0.2 },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+
     const result = await predictCrop(api, capturedFile, 'Apple', location, 'analysis')
 
     assert.equal(result.health_status, 'Healthy')
